@@ -1,0 +1,9 @@
+/logs/
+/myenv/
+/config/
+.env__pycache__/
+.env
+*.pyc
+.idea/
+
+

@@ -1,0 +1,13 @@
+generate_test_case_prompt1: |
+  # Write pytest script based on 
+  # API Specification:{{api_spec}}
+  #  Scenario: {{test_scenario}}
+  generation should avoid any explanation about scripts and how to use it, only generate script
+  import
+#generate_test_case_prompt2: |
+#  # Write pytest script based on
+#  # API Specification:{{api_spec}}
+#  #  Scenario: {{scenario}}
+#  generation should avoid explanation about scripts and how to use it
+#  import
+
