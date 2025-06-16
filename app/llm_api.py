@@ -1,5 +1,5 @@
 from flask import Blueprint, request
-from services.api_service import generate_test_script, edit_test_script
+from services.api_service import generate_test_script, edit_test_script, execute_test_script
 from utils.response import json_response
 
 llm_automation = Blueprint('api', __name__)
@@ -25,5 +25,18 @@ def edit():
     try:
         test_script = edit_test_script(data)
         return json_response({'script': test_script})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+# execute script
+@llm_automation.route('/execute', methods=['POST'])
+def execute():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+
+    try:
+        result = execute_test_script(data)
+        return json_response({'result':result})
     except Exception as e:
         return json_response({'error': str(e)}), 500

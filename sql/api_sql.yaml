@@ -1,7 +1,7 @@
 add_generate_script: |
-  Insert into llm_test.generation_tasks(spec_url,test_scenario,model_name,generated_script)
-  Values(%s, %s, %s, %s);
+  Insert into llm_test.generation_tasks(spec_url,test_scenario,model_name,model_version,prompt_name,generated_script)
+  Values(%s, %s, %s,%s,%s, %s);
 
 query_generate_script: |
-  Select id, generated_script from llm_test.generation_tasks where spec_url=%s and test_scenario=%s and model_name = %s order by id desc limit 1;
+  Select id, generated_script from llm_test.generation_tasks where spec_url=%s and test_scenario=%s and model_name = %s and model_version = %s order by id desc limit 1;
 
