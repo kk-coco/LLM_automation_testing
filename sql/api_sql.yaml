@@ -1,7 +1,64 @@
 add_generate_script: |
-  Insert into llm_test.generation_tasks(spec_url,test_scenario,model_name,model_version,prompt_name,generated_script)
+  Insert into llm_test.generated_script(spec_url,test_scenario,model_name,model_version,prompt_name,generated_script)
   Values(%s, %s, %s,%s,%s, %s);
 
 query_generate_script: |
-  Select id, generated_script from llm_test.generation_tasks where spec_url=%s and test_scenario=%s and model_name = %s and model_version = %s order by id desc limit 1;
+  Select id, generated_script from llm_test.generated_script where spec_url=%s and test_scenario=%s and model_name = %s and model_version = %s order by id desc limit 1;
 
+query_generation_list: |
+  Select id, spec_url, test_scenario, model_name, model_version, generated_script from llm_test.generated_script order by id desc limit %s offset %s;
+
+query_list_num: |
+  Select Count(id) as total from llm_test.generated_script;
+
+query_generation_detail: |
+  Select spec_url, test_scenario, model_name, model_version, generated_script from llm_test.generated_script where id= %s;
+
+add_execution_result: |
+  Insert into llm_test.execution_results(task_id, result_content) Values(%s, %s);
+
+query_execution_result: |
+  Select id, task_id, result_content from llm_test.execution_results where task_id=%s;
+
+add_api_info: |
+  Insert into llm_test.api_info(title,swagger_url) Values(%s, %s);
+
+add_api_details: |
+  Insert into llm_test.api_details(swagger_id, api_path, summary, method, parameters, responses) 
+  Values(%s, %s, %s,%s,%s, %s);
+
+query_api_info: |
+  Select id, title, swagger_url from llm_test.api_info where swagger_url=%s;
+
+query_api_details: |
+  Select id, api_path, summary, method, parameters, responses from llm_test.api_details where swagger_id=%s order by id desc limit %s offset %s;
+
+query_api_num: |
+  Select Count(id) as total from llm_test.api_details;
+
+query_group_apis: |
+  Select id, apis from llm_test.group_apis where apis=%s;
+
+query_group_apis_by_id: |
+  Select id, apis from llm_test.group_apis where id=%s;
+
+add_group_apis: |
+  Insert into llm_test.group_apis(apis) Values(%s);
+
+query_test_scenario: |
+  Select id, group_id, title from llm_test.test_scenario where group_id=%s order by id desc limit %s offset %s;
+
+query_scenario_num: |
+  Select Count(id) as total from llm_test.test_scenario;
+
+query_scenario_by_scenario: |
+  Select id from llm_test.test_scenario where group_id=%s and title=%s;
+
+add_test_scenario: |
+  Insert into llm_test.test_scenario(group_id, title, model_name, model_version) Values(%s, %s, %s, %s);
+
+update_test_scenario: |
+  Update llm_test.test_scenario set title=%s, update_time = NOW() where id=%s;
+
+query_api: |
+  Select  id, api_path, summary, method, parameters, responses from llm_test.api_details  where id IN ({});

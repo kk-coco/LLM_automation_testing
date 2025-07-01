@@ -1,12 +1,30 @@
-generate_test_case_prompt1: |
-  # Write pytest script based on the following API specification and scenario
-  # API Specification:{{api_spec}}
-  #  Scenario: {{test_scenario}}
-  import
-#generate_test_case_prompt2: |
-#  # Write pytest script based on
+#generate_test_case_prompt: |
+#  # Write pytest script based on the following API specification and scenario
+#  # API Specification:{{api_spec}}
+#  #  Scenario: {{test_scenario}}
+#  import
+#generate_test_case_prompt: |
+#  # Create test code in Pytest, Requests, and Python 3.10. Use the following swagger documentation, considering the API call relationship,
+#  such as getting api information before edit api, verifying the add function needs to verify the response from the get api
+#  information. After adding a new resource, generation needs to cover all the input parameters and all edge cases
 #  # API Specification:{{api_spec}}
 #  #  Scenario: {{scenario}}
-#  generation should avoid explanation about scripts and how to use it
 #  import
+generate_test_case_prompt:
+  system: |
+    You are a senior Python testing engineer. Only return clean pytest scripts without any explanations.
+  user: |
+    # Please create test code in Python 3.10 in Pytest format and using the requests library for testing the API 
+    defined by the following Swagger document
+    # Swagger document :{{selected_apis}}
+    The test code should cover all the following scenarios, all possible status code response and all edge cases. 
+    #  Scenario: {{selected_scenarios}}
+    import
+generate_test_scenario_prompt:
+  system: |
+    You are a testing expert. Only return clean test scenario description without any explanations.
+  user: |
+    # Please create test scenario using Testing Techniques for testing the following API 
+    # Swagger document :{{selected_apis}}
+    The scenarios should consider summary, cover all the parameters, responses, all possible status code response and all edge cases. 
 
