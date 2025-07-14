@@ -10,21 +10,37 @@
 #  # API Specification:{{api_spec}}
 #  #  Scenario: {{scenario}}
 #  import
+#before 09/07/2025
+#generate_test_case_prompt:
+#  system: |
+#    You are an experienced test engineer specialising in code coverage, REST API testing, and scenario based testing.
+#    Only return clean pytest scripts without any explanations.
+#  user: |
+#    # Please create test code in Python 3.10 in Pytest format and using the requests library for testing the API
+#    defined by the following API information
+#    # API Info :{{selected_apis}}
+#    The test code should cover the following scenario, all possible status code response and all edge cases.
+#    #  Scenario: {{selected_scenarios}}
+#    import
 generate_test_case_prompt:
   system: |
-    You are a senior Python testing engineer. Only return clean pytest scripts without any explanations.
+    You are an experienced test engineer specializing in code coverage, REST API testing, and scenario based testing.
+    Only return clean pytest scripts without any explanations.
   user: |
     # Please create test code in Python 3.10 in Pytest format and using the requests library for testing the API 
-    defined by the following Swagger document
-    # Swagger document :{{selected_apis}}
-    The test code should cover all the following scenarios, all possible status code response and all edge cases. 
+    defined by the following API information
+    # API Info :{{selected_apis}}
+    The test code should cover the following scenario, all possible status code response and all edge cases. 
     #  Scenario: {{selected_scenarios}}
-    import
+    The generated code should avoid syntax error.
+#    create a different name for each test case so each test case can executed separately by command,
+#    for example @pytest.mark.xxxx,
 generate_test_scenario_prompt:
   system: |
-    You are a testing expert. Only return clean test scenario description without any explanations.
+    You are a testing expert. Only return clean test scenario title, no steps without any explanations.
+    for example: 1. XXXXX
   user: |
     # Please create test scenario using Testing Techniques for testing the following API 
     # Swagger document :{{selected_apis}}
-    The scenarios should consider summary, cover all the parameters, responses, all possible status code response and all edge cases. 
+    The scenarios should consider all the parameters, responses, all possible status code response and all edge cases. 
 

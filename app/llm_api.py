@@ -1,7 +1,10 @@
 from flask import Blueprint, request
-from services.api_service import (generate_test_script, edit_test_script, execute_test_script,get_api_data,
+from services.api_service import (generate_test_script, execute_test_script,get_api_data,
                                   generate_test_scenario, load_generation_list, query_detail, get_execution_result,
-                                  query_api_detail, query_scenario_list, edit_test_scenario, add_test_scenario)
+                                  query_api_detail, query_scenario_list, edit_test_scenario, add_test_scenario,
+                                  update_test_scenario_status, update_generation_script, query_script_group_detail,
+                                  update_case_detail, add_script_case, update_test_case_status, undo_test_case_status,
+                                  update_case_execution_fail_reason)
 from utils.response import json_response
 
 llm_automation = Blueprint('api', __name__)
@@ -23,8 +26,9 @@ def get_api_list():
         page = int(request.args.get('page', 1))
         page_size = int(request.args.get('page_size', 10))
         offset = (page - 1) * page_size
-        result = query_api_detail(id, offset, page_size)
-        return json_response({'data': result['result'], 'total': result['total']})
+        result = query_api_detail(id)
+        return json_response({'data': result['result'], 'total': result['total'],'used': result['used'],'unused': result['unused'],
+                              'api_title': result['api_title'], 'api_swagger': result['api_swagger']})
     except Exception as e:
         return json_response({'error': str(e)}), 500
 @llm_automation.route('/generate_scenario', methods=['POST'])
@@ -47,15 +51,28 @@ def add_scenario():
         return json_response({'data': result})
     except Exception as e:
         return json_response({'error': str(e)}), 500
+@llm_automation.route('/update_scenario_status', methods=['POST'])
+def update_scenario():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = update_test_scenario_status(data)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
 @llm_automation.route('/get_scenario_list', methods=['GET'])
 def get_scenario_list():
     try:
         id = int(request.args.get('id'))
-        page = int(request.args.get('page', 1))
-        page_size = int(request.args.get('page_size', 10))
-        offset = (page - 1) * page_size
-        result = query_scenario_list(id, offset, page_size)
-        return json_response({'scenario_list': result['scenario_list'],'api_info':result['api_info'], 'total': result['total']})
+        # page = int(request.args.get('page', 1))
+        # page_size = int(request.args.get('page_size', 10))
+        # offset = (page - 1) * page_size
+        result = query_scenario_list(id)
+        return json_response({'scenario_list': result['scenario_list'],'api_info': result['api_info'],
+                              'total': result['total'], 'api_title': result['api_title'], 'used': result['used'],'unused': result['unused'],
+                              'api_swagger': result['api_swagger'], 'valid_num': result['valid_num'], 'edit_num': result['edit_num'],
+                              'invalid_num': result['invalid_num'], 'added_num': result['added_num']})
 
     except Exception as e:
         return json_response({'error': str(e)}), 500
@@ -76,22 +93,11 @@ def generate_script():
     if not isinstance(data, dict):
         return json_response({'error': 'Missing input data'}), 400
     try:
-        test_script = generate_test_script(data)
-        return json_response({'id': test_script['id'],'script': test_script['generated_script']})
+        result = generate_test_script(data)
+        return json_response({'id': result})
     except Exception as e:
         return json_response({'error': str(e)}), 500
 
-@llm_automation.route('/edit', methods=['POST'])
-def edit():
-    data = request.json
-    if not isinstance(data, dict):
-        return json_response({'error': 'Missing input data'}), 400
-
-    try:
-        test_script = edit_test_script(data)
-        return json_response({'script': test_script})
-    except Exception as e:
-        return json_response({'error': str(e)}), 500
 
 # execute script
 @llm_automation.route('/execute', methods=['POST'])
@@ -102,10 +108,18 @@ def execute():
 
     try:
         result = execute_test_script(data)
-        return json_response({'result':result})
+        return json_response({'result': result})
     except Exception as e:
         return json_response({'error': str(e)}), 500
 
+@llm_automation.route('/get_script_group_detail', methods=['GET'])
+def get_script_group_detail():
+    try:
+        id = int(request.args.get('id'))
+        result = query_script_group_detail(id)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
 @llm_automation.route('/get_generation_list', methods=['GET'])
 def get_generation_list():
     try:
@@ -122,6 +136,71 @@ def get_generation_detail():
     try:
         id = int(request.args.get('id'))
         result = query_detail(id)
+        return json_response({'script_result': result['script_result'], 'case_result': result['case_result']})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+@llm_automation.route('/update_detail', methods=['POST'])
+def update_generation_result():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = update_generation_script(data)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+@llm_automation.route('/save_script_case', methods=['POST'])
+def save_script_case():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = add_script_case(data)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+@llm_automation.route('/update_script_case', methods=['POST'])
+def update_script_case():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = update_case_detail(data)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+@llm_automation.route('/update_case_status', methods=['POST'])
+def update_case_status():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = update_test_case_status(data)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+@llm_automation.route('/undo_case_status', methods=['POST'])
+def undo_case_status():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = undo_test_case_status(data)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+@llm_automation.route('/set_fail_reason', methods=['POST'])
+def set_fail_reason():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = update_case_execution_fail_reason(data)
         return json_response({'data': result})
     except Exception as e:
         return json_response({'error': str(e)}), 500
