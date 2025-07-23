@@ -14,6 +14,8 @@ import time
 from utils.logging import Logger
 from utils.prompt_loader import get_prompt
 from utils.load_sql import load_all_sql
+from utils.metrics import check_syntax, check_status_code_coverage, convert_sets_to_lists, expand_schema, \
+    extract_json_from_markdown, calculate_method_coverage
 
 sqls = load_all_sql()
 log = Logger()
@@ -71,7 +73,6 @@ def save_script(group_id,api_info, scenario_id, test_scenario, model_name, model
     return result
 
 def add_scenario_group(data):
-    # scenario_ids = [scenario['id'] for scenario in data['selected_scenarios']]
     scenario_ids = [scenario['id'] for scenario in data]
     scenario_ids_sorted = sorted(scenario_ids)
     scenario_ids_json = json.dumps(scenario_ids_sorted)
@@ -98,7 +99,12 @@ def generate_test_script(data):
     selected_scenarios = data.get('selected_scenarios')
     group_id = add_scenario_group(selected_scenarios)
     print("check add_scenario_group result--", group_id) #result is 1
+    selected_apis_list = data.get("selected_apis")
     selected_apis = json.dumps(data.get("selected_apis", []))
+    print('api original', data.get("selected_apis"))
+    print('api original type', type(data.get("selected_apis")))
+    print('api', selected_apis)
+    print('api type', type(selected_apis))
     model = data.get('model_name')
     model_version = data.get('model_version')
     prompt_name = "generate_test_case_prompt"
@@ -125,10 +131,48 @@ def generate_test_script(data):
                 script = re.sub(r"```(?:python)?\n?", "", script)
                 script = re.sub(r"```$", "", script.strip())
             # save generated script
+            script_syntax_result = 0.0
+            # check script syntax
+            check_script_syntax = check_syntax(script)
+            print('check_script_syntax', check_script_syntax)
+            if check_script_syntax:
+                script_syntax_result = 1.0
+            print('script_syntax_result', script_syntax_result)
+            # check test script status code coverage
+            overall_coverage, coverage_detail = check_status_code_coverage(selected_apis_list, script)
+            status_code_coverage = round(overall_coverage, 2)
+            converted_detail = convert_sets_to_lists(coverage_detail)
+            status_code_coverage_detail = json.dumps(converted_detail, ensure_ascii=False)
+            # check test script method coverage
+            method_coverage, method_coverage_detail = calculate_method_coverage(selected_apis_list, script)
+            print('method_coverage', method_coverage)
+            print('method_coverage_detail', method_coverage_detail)
+            # check test script data type correctness
+            parameter_context = {
+                'selected_apis': selected_apis,
+                'generated_script': script
+            }
+            check_result = None
+            check_parameter_prompt = get_prompt("check_parameter_type_correctness", parameter_context)
+            if model == "ChatGPT":
+                check_result = call_openai(check_parameter_prompt, model_version)
+            if model == "DeepSeek":
+                check_result = call_deepseek(check_parameter_prompt, model_version)
+            print('check result', check_result)
+            print('check result type', type(check_result))
+            result = extract_json_from_markdown(check_result)
+            check_result_json = json.loads(result)
+            data_type_coverage = check_result_json['coverage']
+            print('check data_type_coverage type', type(data_type_coverage))
+            print('check detail type', type(check_result_json['detail']))
+            data_type_detail = json.dumps(check_result_json['detail'], ensure_ascii=False)
+            print("conversion coverage:", data_type_coverage)
+            print(" detail JSON after conversion:", data_type_detail)
             add_script_sql = sqls['add_generate_script']
             prompt_json = json.dumps(prompt)
-            params = (group_id, selected_apis, scenario_id, test_scenario, model, model_version,
-                      prompt_json, script, script)
+            params = (group_id, selected_apis, scenario_id, test_scenario, model, model_version, prompt_json,
+                      script, script, script_syntax_result, status_code_coverage, status_code_coverage_detail,
+                      data_type_coverage, data_type_detail, method_coverage, method_coverage_detail)
             add_script_sql_result = execute(add_script_sql, params)
             if add_script_sql_result:
                 log.info(f"save generated script successful: {add_script_sql_result}")
@@ -140,41 +184,53 @@ def generate_test_script(data):
                     log.info(f"query script result success: {query_result}")
                     script_id = query_result['id']
                     script_text = query_result['last_version']
-                    # handle script, separate case save script case
-                    # pattern = re.compile(r'(@pytest\.mark\.[\w_]+\s+def\s+test_[\w_]+\s*\(.*?\):\n(?:    .+\n)+)',
-                    #                      re.MULTILINE)
-                    # mark_pattern = re.compile(r'@pytest\.mark\.[\w_]+', re.MULTILINE)
-                    #
-                    # func_pattern = re.compile(
-                    #     # r'@pytest\.mark\.[\w_]+\s+(def\s+test_[\w_]+\s*\(.*?\):\n(?: {4}.*\n)+)',
-                    #     r'@pytest\.mark\.[\w_]+\s+(def\s+test_[\w_]+\s*\(.*?\):\n(?:[ \t]{4,}.*\n)+)',
-                    #     re.MULTILINE
-                    # )
-                    func_names = re.findall(r'def\s+(test_[\w_]+)\s*\(', script_text)
-                    # 提取整个 test case 函数代码块
-                    case_blocks = re.findall(
-                        r'(def\s+test_[\w_]+\s*\(.*?\):\n(?:[ \t]{4,}.*\n)+)',
-                        script_text, re.MULTILINE
+                    # extract function name and case body
+                    pattern = re.compile(
+                        r'^def\s+(test_\w+)\s*\(.*?\):\n'  
+                        r'(?:^[ \t]+.*(?:\n|$))*'
+                        , re.MULTILINE
                     )
-
-                    # cases = pattern.findall(query_result['last_version'])
-                    # marks = mark_pattern.findall(script_text)
-                    # functions = func_pattern.findall(script_text)
+                    func_names = []
+                    case_blocks = []
+                    for match in pattern.finditer(script_text):
+                        func_names.append(match.group(1))
+                        start_pos = match.start()
+                        next_match = next(pattern.finditer(script_text, match.end()), None)
+                        end_pos = next_match.start() if next_match else len(script_text)
+                        case_blocks.append(script_text[start_pos:end_pos])
                     if len(func_names) != len(case_blocks):
                         log.warning(f"Mismatch between marks ({len(func_names)}) and functions ({len(case_blocks)})")
-
-
+                    valid_case_count = 0
+                    total_cases = len(func_names)
                     for i, (mark, func_body) in enumerate(zip(func_names, case_blocks), 1):
                         print(f"--- CASE {i} title ---\n{mark}\n")
                         print(f"--- CASE {i} title ---\n{func_body}\n")
                         add_script_case_sql = sqls['add_script_case_detail']
                         source_type = "LLM"
+                        if script_syntax_result == 1:
+                            case_syntax_result = 0
+                            valid_case_count += 1
+                        else:
+                            check_case_syntax_result = check_syntax(func_body)
+                            if check_case_syntax_result:
+                                case_syntax_result = 0
+                                valid_case_count += 1
+                            else:
+                                case_syntax_result = 1
                         add_script_case_res = execute(add_script_case_sql, (script_id, scenario_id, mark,
-                                                                            func_body, func_body, source_type))
+                                                                            func_body, func_body, source_type, case_syntax_result))
                         if add_script_case_res:
                             log.info(f"add script case success: {add_script_case_res}")
                         else:
                             log.error(f"add script case fail: {add_script_case_res}")
+                    if script_syntax_result == 0:
+                        update_script_syntax_sql = sqls['update_script_syntax']
+                        syntax_rate = round(valid_case_count / total_cases, 2) if total_cases > 0 else 0.0
+                        update_script_syntax_result = execute(update_script_syntax_sql, (syntax_rate, script_id))
+                        if update_script_syntax_result:
+                            log.info(f"update script case syntax check result success: {update_script_syntax_result}")
+                        else:
+                            log.error(f"update script case syntax check result fail: {update_script_syntax_result}")
                 else:
                     log.error(f"query script result fail: {query_result}")
             else:
@@ -319,6 +375,7 @@ def get_api_data(data):
         return result
     response = requests.get(url)
     swagger_json = response.json()
+    definitions = swagger_json.get("definitions", {})
     add_swagger_sql = sqls['add_api_info']
     params = (title, url)
     add_swagger_result = execute(add_swagger_sql, params)
@@ -329,19 +386,35 @@ def get_api_data(data):
             result = query_swagger_result['id']
             for path, methods in swagger_json.get('paths', {}).items():
                 for method, details in methods.items():
-                    # api_info = {
-                    #     "path": path,
-                    #     "method": method.upper(),
-                    #     "summary": details.get('summary', ''),
-                    #     "parameters": details.get('parameters', []),
-                    #     "responses": details.get('responses', {})
-                    # }
                     summary = details.get('summary', '')
-                    parameters = json.dumps(details.get('parameters', []), ensure_ascii=False)
-                    responses = json.dumps(details.get('responses', {}), ensure_ascii=False)
-                    # api_data.append(api_info)
-                    add_swagger_detail_sql=sqls['add_api_details']
-                    detail_params = (query_swagger_result['id'], path, summary, method.upper(), parameters, responses)
+                    raw_parameters = details.get('parameters', [])
+                    expanded_parameters = []
+                    for param in raw_parameters:
+                        if param.get('in') == 'body' and 'schema' in param:
+                            schema = param['schema']
+                            expanded = expand_schema(schema, definitions)
+                            expanded_parameters.extend(expanded)
+                        else:
+                            expanded_parameters.append(param)
+                    responses = details.get('responses', {})
+                    expanded_responses = {}
+                    for code, resp in responses.items():
+                        description = resp.get("description", "")
+                        if "schema" in resp:
+                            fields = expand_schema(resp["schema"], definitions)
+                            expanded_responses[code] = {
+                                "description": description,
+                                "fields": fields
+                            }
+                        else:
+                            expanded_responses[code] = {
+                                "description": description
+                            }
+
+                    parameters_json = json.dumps(expanded_parameters, ensure_ascii=False)
+                    responses_json = json.dumps(expanded_responses, ensure_ascii=False)
+                    add_swagger_detail_sql = sqls['add_api_details']
+                    detail_params = (query_swagger_result['id'], path, summary, method.upper(), parameters_json, responses_json)
                     add_swagger_detail_result = execute(add_swagger_detail_sql, detail_params)
                     if add_swagger_detail_result:
                         log.info("save api details success")
@@ -534,7 +607,7 @@ def extract_script_head(script: str):
     lines = script.splitlines()
     head_lines = []
     for line in lines:
-        if line.strip().startswith("@pytest") or line.strip().startswith("def test_"):
+        if line.strip().startswith("def test_"):
             break
         head_lines.append(line)
     return "\n".join(head_lines)
@@ -546,7 +619,7 @@ def query_detail(id):
     if script_result:
         log.info("query script detail success")
         script_header = extract_script_head(script_result['last_version'])
-        # print('script_header', script_header)
+        print('script_header', script_header)
         script_result['script_header'] = script_header
         # print('script_result', script_result)
         # query script case detail
@@ -604,22 +677,15 @@ def update_case_detail(data):
 
 
 def replace_case_function_body(script_text, target_mark_name, new_func_code):
-    # pattern = re.compile(
-    #     rf'({re.escape(target_mark_name)}\s*)'         # group 1: mark
-    #     r'(def\s+test_[\w_]+\s*\(.*?\):\n(?:[ \t]+.*\n?)*)',           # group 2: function
-    #     re.MULTILINE
-    # )
-
-    # replace func body，keep pytest.mark.xxx
-    # updated_script = pattern.sub(lambda m: m.group(1) + new_func_code +
-    #                                        ("\n" if not new_func_code.endswith("\n") else ""), script_text)
     pattern = re.compile(
-        rf'(def\s+{re.escape(target_mark_name)}\s*\(.*?\):\n'
-        r'(?:[ \t]+.*\n?)*)',
+        rf'(def\s+{re.escape(target_mark_name)}\s*\(.*?\):\n(?:.*\n)*?)(?=^def\s|\Z)',  # 非贪婪直到下一个 def 或结束
         re.MULTILINE
     )
-    updated_script = pattern.sub(new_func_code + ("\n" if not new_func_code.endswith("\n") else ""), script_text)
 
+    if not new_func_code.endswith("\n"):
+        new_func_code += "\n"
+
+    updated_script = pattern.sub(new_func_code, script_text)
     return updated_script
 
 def add_case_to_script(script_text, new_func_code):
@@ -635,14 +701,6 @@ def delete_case_from_script(script_text, target_func_name):
     remove test case by function name
     target_mark_name: "@pytest.mark.xxx"
     """
-    # pattern = re.compile(
-    #     rf'{re.escape(target_mark_name)}\s*'
-    #     r'def\s+test_[\w_]+\s*\(.*?\):\n(?:[ \t]+.*\n?)+',
-    #     re.MULTILINE
-    # )
-    #
-    # updated_script = pattern.sub('', script_text)
-    # return updated_script.strip() + '\n'
     pattern = re.compile(
         rf'def\s+{re.escape(target_func_name)}\s*\(.*?\):\n(?:[ \t]+.*\n?)+',
         re.MULTILINE

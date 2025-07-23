@@ -33,14 +33,65 @@ generate_test_case_prompt:
     The test code should cover the following scenario, all possible status code response and all edge cases. 
     #  Scenario: {{selected_scenarios}}
     The generated code should avoid syntax error.
-#    create a different name for each test case so each test case can executed separately by command,
 #    for example @pytest.mark.xxxx,
 generate_test_scenario_prompt:
   system: |
-    You are a testing expert. Only return clean test scenario title, no steps without any explanations.
-    for example: 1. XXXXX
+    You are a testing expert who specialises in writing precise and comprehensive test scenarios based on API 
+    specifications. You must always return only the final test scenarios in a clean numbered list format. Do not 
+    include any explanations, comments, or formatting other than the list.
   user: |
-    # Please create test scenario using Testing Techniques for testing the following API 
+    Given the following API specifications, write comprehensive test scenarios that meet these requirements:
+    1. Strictly adhere to the API parameters and responses.
+    2. Carefully analyse all provided APIs, including their upstream and downstream dependencies.
+    3. Generate test scenarios covering:
+       - Individual API test cases (single API verification).
+       - Combined workflows involving all provided APIs.
+    4. Include both positive (valid and successful) test scenarios and negative (error and edge case) scenarios. 
+    Ensure positive scenarios are fully and clearly covered.
+    5. Consider all possible input combinations, status code responses, and edge cases.
+
     # Swagger document :{{selected_apis}}
-    The scenarios should consider all the parameters, responses, all possible status code response and all edge cases. 
+    Return only a numbered list of the final test scenario titles. 
+
+check_parameter_type_correctness:
+  system: |
+    You are an expert assistant specialized in analyzing test scripts against API specifications for parameter data type coverage. 
+    You must always return a valid JSON object without any extra commentary or explanation.
+  user: |
+    Analyze the test script against the API specifications and provide a coverage report with the following requirements:
+    1. Strictly check parameter data types in the script against API specs only
+    2. Output must include:
+      - "coverage": overall percentage based on all matched parameters across endpoints
+      - "detail": an object with per-endpoint breakdown including:
+        * "matched": number of parameters with correctly matched types
+        * "total": total number of parameters defined in the API spec
+        * "coverage_percent": matched ÷ total × 100
+        * "mismatches": a list of mismatched parameters showing expected and actual types
+    3. Only include parameters that are defined in the API specifications.
+    4. Output must be **strictly** formatted like this (replace values with actual results):
+    {
+      "coverage": XX,
+      "detail":{
+        "api_path_1": {
+          "matched": X,
+          "total": X,
+          "coverage_percent": X,
+          "mismatches": [
+            {
+              "name": "XX",
+              "expected": "XX",
+              "actual": "XX"
+            }
+          ]
+        },
+          "api_path_2": {
+            ...
+          }
+      } 
+    }
+    API specifications: {{selected_apis}}
+    Test script: {{generated_script}}
+    Respond with only the formatted JSON object. Do not include any other text.
+
+
 

@@ -1,7 +1,10 @@
 add_generate_script: |
-  Insert into llm_test.generated_script(group_id,spec_url,scenario_id,test_scenario,model_name,model_version,prompt_name,original_script,last_version)
-  Values(%s, %s, %s, %s,%s,%s, %s,%s, %s);
-
+  Insert into llm_test.generated_script(group_id,spec_url,scenario_id,test_scenario,model_name,model_version,
+  prompt_name,original_script,last_version, syntax_correct, status_code_coverage, status_code_coverage_detail, 
+  data_type_correctness, param_type_check_detail, method_coverage, method_coverage_detail)
+  Values(%s, %s, %s, %s,%s,%s, %s,%s, %s, %s, %s, %s, %s, %s, %s, %s);
+update_script_syntax: |
+  Update llm_test.generated_script set syntax_correct=%s, update_time = NOW() where id=%s;
 query_generate_script: |
   Select id, last_version from llm_test.generated_script where spec_url=%s and scenario_id=%s and group_id=%s order by id desc limit 1;
 
@@ -24,7 +27,7 @@ update_generation_detail: |
 query_script_case_detail: |
   Select id, script_id, scenario_id, mark_name, last_version, edit_count, last_execution_status, last_error_message, 
   source_type, status, last_fail_reason
-  from llm_test.script_case_detail where script_id=%s and scenario_id=%s;
+  from llm_test.script_case_detail where script_id=%s and scenario_id=%s order by id desc;
   
 query_scenario_group: |
   Select id, scenarios from llm_test.scenario_group  where scenarios=%s order by id desc;
@@ -50,8 +53,8 @@ add_scenario_group_relations: |
   INSERT INTO llm_test.group_scenario_relations (group_id, scenario_id) VALUES (%s, %s);
 
 add_script_case_detail: |
-  Insert into llm_test.script_case_detail(script_id,scenario_id,mark_name,original_code,last_version,source_type)
-  Values(%s, %s, %s, %s, %s, %s);
+  Insert into llm_test.script_case_detail(script_id,scenario_id,mark_name,original_code,last_version,source_type, syntax_check_result)
+  Values(%s, %s, %s, %s, %s, %s, %s);
 
 update_script_case_detail: |
   Update llm_test.script_case_detail set last_version=%s,mark_name=%s, edit_count = edit_count + 1, update_time = NOW() where id=%s;
@@ -63,7 +66,7 @@ update_script_case_execution_fail_reason: |
   Update llm_test.script_case_detail set last_fail_reason=%s, update_time = NOW() where id=%s;
 
 update_script_case_execution: |
-  Update llm_test.script_case_detail set last_execution_status=%s,last_error_message=%s, update_time = NOW() where id=%s;
+  Update llm_test.script_case_detail set last_execution_status=%s,last_error_message=%s,last_fail_reason=NULL, update_time = NOW() where id=%s;
 
 query_script_case_by_script_id: |
   Select id, script_id, mark_name from llm_test.script_case_detail where script_id = %s;
@@ -107,7 +110,7 @@ add_api_details: |
   Values(%s, %s, %s,%s,%s, %s);
 
 query_api_info: |
-  Select id, title, swagger_url from llm_test.api_info where swagger_url=%s;
+  Select id, title, swagger_url from llm_test.api_info where swagger_url=%s order by id desc limit 1;
 
 query_api_info_by_id: |
   Select title,swagger_url from llm_test.api_info where id=%s;
@@ -155,17 +158,22 @@ add_group_relations: |
 
 query_test_scenario: |
   SELECT
-    a.id,
-    a.group_id,
-    a.last_version,
-    a.status,
-    a.edit_count,
-    gs.scenario_id
+  a.id,
+  a.group_id,
+  a.last_version,
+  a.status,
+  a.edit_count,
+  CASE 
+    WHEN EXISTS (
+      SELECT 1 FROM llm_test.generated_script gs WHERE gs.scenario_id = a.id
+    ) THEN a.id
+    ELSE NULL
+  END AS scenario_id
   FROM llm_test.test_scenario a
-  LEFT JOIN llm_test.generated_script gs 
-      ON a.id = gs.scenario_id
   WHERE a.group_id = %s
   ORDER BY a.id DESC;
+
+
 #  Select id, group_id, last_version, status, edit_count from llm_test.test_scenario where group_id=%s order by id desc;
 #  Select id, group_id, last_version from llm_test.test_scenario where group_id=%s and status=0 order by id desc limit %s offset %s;
 
