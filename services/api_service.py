@@ -677,11 +677,12 @@ def update_case_detail(data):
 
 
 def replace_case_function_body(script_text, target_mark_name, new_func_code):
+    if not script_text.endswith("\n"):
+        script_text += "\n"
     pattern = re.compile(
-        rf'(def\s+{re.escape(target_mark_name)}\s*\(.*?\):\n(?:.*\n)*?)(?=^def\s|\Z)',  # 非贪婪直到下一个 def 或结束
+        rf'(def\s+{re.escape(target_mark_name)}\s*\(.*?\):\n(?:.*\n)*?)(?=^def\s|\Z)',
         re.MULTILINE
     )
-
     if not new_func_code.endswith("\n"):
         new_func_code += "\n"
 

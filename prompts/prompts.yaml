@@ -1,39 +1,18 @@
-#generate_test_case_prompt: |
-#  # Write pytest script based on the following API specification and scenario
-#  # API Specification:{{api_spec}}
-#  #  Scenario: {{test_scenario}}
-#  import
-#generate_test_case_prompt: |
-#  # Create test code in Pytest, Requests, and Python 3.10. Use the following swagger documentation, considering the API call relationship,
-#  such as getting api information before edit api, verifying the add function needs to verify the response from the get api
-#  information. After adding a new resource, generation needs to cover all the input parameters and all edge cases
-#  # API Specification:{{api_spec}}
-#  #  Scenario: {{scenario}}
-#  import
-#before 09/07/2025
-#generate_test_case_prompt:
-#  system: |
-#    You are an experienced test engineer specialising in code coverage, REST API testing, and scenario based testing.
-#    Only return clean pytest scripts without any explanations.
-#  user: |
-#    # Please create test code in Python 3.10 in Pytest format and using the requests library for testing the API
-#    defined by the following API information
-#    # API Info :{{selected_apis}}
-#    The test code should cover the following scenario, all possible status code response and all edge cases.
-#    #  Scenario: {{selected_scenarios}}
-#    import
 generate_test_case_prompt:
   system: |
     You are an experienced test engineer specializing in code coverage, REST API testing, and scenario based testing.
     Only return clean pytest scripts without any explanations.
   user: |
-    # Please create test code in Python 3.10 in Pytest format and using the requests library for testing the API 
+    Please create test code in Python 3.10 in Pytest format and using the requests library for testing the API 
     defined by the following API information
-    # API Info :{{selected_apis}}
-    The test code should cover the following scenario, all possible status code response and all edge cases. 
-    #  Scenario: {{selected_scenarios}}
-    The generated code should avoid syntax error.
-#    for example @pytest.mark.xxxx,
+    Please create test code in Python 3.10 in Pytest format, and using the requests library for testing only 
+    the following specific scenario: {{selected_scenarios}}
+    The test code must:
+    1. Strictly follow only the specified scenario
+    2. Use the exact parameters and responses from the provided API info
+    3. Include only the necessary test cases for this specific scenario
+    API Info :{{selected_apis}}
+    Return only the pytest code for this single scenario.
 generate_test_scenario_prompt:
   system: |
     You are a testing expert who specialises in writing precise and comprehensive test scenarios based on API 
@@ -41,16 +20,16 @@ generate_test_scenario_prompt:
     include any explanations, comments, or formatting other than the list.
   user: |
     Given the following API specifications, write comprehensive test scenarios that meet these requirements:
-    1. Strictly adhere to the API parameters and responses.
+    1. Strictly follow the defined API parameters and expected responses.
     2. Carefully analyse all provided APIs, including their upstream and downstream dependencies.
     3. Generate test scenarios covering:
-       - Individual API test cases (single API verification).
-       - Combined workflows involving all provided APIs.
-    4. Include both positive (valid and successful) test scenarios and negative (error and edge case) scenarios. 
-    Ensure positive scenarios are fully and clearly covered.
-    5. Consider all possible input combinations, status code responses, and edge cases.
-
-    # Swagger document :{{selected_apis}}
+       - Individual API validations (each API tested independently).
+       - End-to-end workflows that combine multiple APIs.
+    4. Include both:
+     - Positive test scenarios (valid inputs, successful responses).
+     - Negative test scenarios (invalid inputs, error cases, and edge conditions).
+     Make sure all parameter combinations, data types, and status code responses are considered.
+    Swagger document :{{selected_apis}}
     Return only a numbered list of the final test scenario titles. 
 
 check_parameter_type_correctness:
