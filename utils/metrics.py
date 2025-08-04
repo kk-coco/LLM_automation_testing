@@ -2,6 +2,9 @@ import ast
 import re
 import json
 
+from utils.llm import call_openai, call_deepseek
+from utils.prompt_loader import get_prompt
+
 
 def check_syntax(code):
     try:
@@ -13,7 +16,6 @@ def check_syntax(code):
 
 def check_status_code_coverage(api_info, script):
     script_status_codes = set(re.findall(r'assert\s+response\.status_code\s*==\s*(\d+)', script))
-
     api_status_code_map = {}
     for api in api_info:
         path = api["api_path"]
@@ -115,7 +117,24 @@ def calculate_method_coverage(selected_apis, script_text):
     detail = {
         "expected": list(expected_paths),
         "used_in_script": list(used_paths),
-        "matched": list(matched_paths)
+        "covered": list(matched_paths)
     }
     detail_json = json.dumps(detail, ensure_ascii=False)
     return coverage, detail_json
+
+def calculate_data_type_coverage(parameter_context, model, model_version):
+    check_result = None
+    check_parameter_prompt = get_prompt("check_parameter_type_correctness", parameter_context)
+    if model == "ChatGPT":
+        check_result = call_openai(check_parameter_prompt, model_version)
+    if model == "DeepSeek":
+        check_result = call_deepseek(check_parameter_prompt, model_version)
+    print('check result', check_result)
+    print('check result type', type(check_result))
+    result = extract_json_from_markdown(check_result)
+    check_result_json = json.loads(result)
+    data_type_coverage = check_result_json['coverage']
+    print('check data_type_coverage type', type(data_type_coverage))
+    print('check detail type', type(check_result_json['detail']))
+    data_type_detail = json.dumps(check_result_json['detail'], ensure_ascii=False)
+    return data_type_coverage, data_type_detail

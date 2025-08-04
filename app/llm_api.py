@@ -4,7 +4,8 @@ from services.api_service import (generate_test_script, execute_test_script,get_
                                   query_api_detail, query_scenario_list, edit_test_scenario, add_test_scenario,
                                   update_test_scenario_status, update_generation_script, query_script_group_detail,
                                   update_case_detail, add_script_case, update_test_case_status, undo_test_case_status,
-                                  update_case_execution_fail_reason)
+                                  update_case_execution_fail_reason, set_data_type_metrics, set_syntax_metrics,
+                                  set_method_coverage_metrics, set_status_coverage_metrics)
 from utils.response import json_response
 
 llm_automation = Blueprint('api', __name__)
@@ -136,7 +137,8 @@ def get_generation_detail():
     try:
         id = int(request.args.get('id'))
         result = query_detail(id)
-        return json_response({'script_result': result['script_result'], 'case_result': result['case_result']})
+        return json_response({'script_result': result['script_result'], 'case_result': result['case_result'],
+                              'metrics_result': result['metrics_result']})
     except Exception as e:
         return json_response({'error': str(e)}), 500
 
@@ -210,6 +212,48 @@ def get_execution_detail():
     try:
         id = int(request.args.get('id'))
         result = get_execution_result(id)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+@llm_automation.route('/update_data_type_metrics', methods=['POST'])
+def update_data_type_metrics():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = set_data_type_metrics(data)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+@llm_automation.route('/update_syntax_metrics', methods=['POST'])
+def update_syntax_metrics():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = set_syntax_metrics(data)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+@llm_automation.route('/update_method_coverage_metrics', methods=['POST'])
+def update_method_coverage_metrics():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = set_method_coverage_metrics(data)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+@llm_automation.route('/update_status_coverage_metrics', methods=['POST'])
+def update_status_coverage_metrics():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = set_status_coverage_metrics(data)
         return json_response({'data': result})
     except Exception as e:
         return json_response({'error': str(e)}), 500

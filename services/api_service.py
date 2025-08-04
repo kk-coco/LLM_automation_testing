@@ -11,53 +11,15 @@ from utils.db import execute, fetch_one, fetch_all
 import openai
 import time
 
+from utils.llm import call_openai, call_deepseek
 from utils.logging import Logger
 from utils.prompt_loader import get_prompt
 from utils.load_sql import load_all_sql
-from utils.metrics import check_syntax, check_status_code_coverage, convert_sets_to_lists, expand_schema, \
-    extract_json_from_markdown, calculate_method_coverage
+from utils.metrics import (check_syntax, check_status_code_coverage, convert_sets_to_lists, expand_schema,
+                           calculate_method_coverage, calculate_data_type_coverage)
 
 sqls = load_all_sql()
 log = Logger()
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-def call_openai(prompt, model_version):
-    openai.api_key = OPENAI_API_KEY
-    start_time = time.time()
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    response = client.chat.completions.create(
-        model=model_version,
-        messages=[
-            {"role": "system", "content": prompt['system']},
-            {"role": "user", "content": prompt['user']}
-        ],
-        temperature=0.6,
-    )
-    end_time = time.time()
-    response_time = round(end_time - start_time, 3)
-    content = response.choices[0].message.content
-    print("check path openai", content)
-
-    return content
-
-def call_deepseek(prompt, model_version):
-    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-    start_time = time.time()
-    response = client.chat.completions.create(
-        model=model_version,
-        messages=[
-            {"role": "system", "content": prompt['system']},
-            {"role": "user", "content": prompt['user']}
-        ],
-        temperature=0.0,
-        stream=False
-    )
-    # print(response.choices[0].message.content)
-    content = response.choices[0].message.content
-    print("check path deepseek", content)
-
-    return content
 
 def save_script(group_id,api_info, scenario_id, test_scenario, model_name, model_version, script, prompt_name):
     sql = sqls['add_generate_script']
@@ -83,7 +45,6 @@ def add_scenario_group(data):
         log.info("save group scenarios success")
         sql = sqls["query_scenario_group"]
         new_result = fetch_one(sql, scenario_ids_json)
-        print("check error new result", new_result) #group info {'id': 1, 'scenarios': '[294]'}
         group_scenario_relations_sql = sqls['add_scenario_group_relations']
         for i in scenario_ids:
             add_group_scenario_relations = execute(group_scenario_relations_sql, (new_result["id"], i))
@@ -98,13 +59,12 @@ def add_scenario_group(data):
 def generate_test_script(data):
     selected_scenarios = data.get('selected_scenarios')
     group_id = add_scenario_group(selected_scenarios)
-    print("check add_scenario_group result--", group_id) #result is 1
     selected_apis_list = data.get("selected_apis")
     selected_apis = json.dumps(data.get("selected_apis", []))
-    print('api original', data.get("selected_apis"))
-    print('api original type', type(data.get("selected_apis")))
-    print('api', selected_apis)
-    print('api type', type(selected_apis))
+    # print('api original', data.get("selected_apis"))
+    # print('api original type', type(data.get("selected_apis")))
+    # print('api', selected_apis)
+    # print('api type', type(selected_apis))
     model = data.get('model_name')
     model_version = data.get('model_version')
     prompt_name = "generate_test_case_prompt"
@@ -113,8 +73,6 @@ def generate_test_script(data):
     for scenario in selected_scenarios:
         scenario_id = scenario['id']
         test_scenario = scenario['last_version']
-        print('scenario', test_scenario)
-        print('scenario id', scenario_id)
         context = {
             'selected_apis': selected_apis,
             'selected_scenarios': test_scenario
@@ -136,7 +94,7 @@ def generate_test_script(data):
             check_script_syntax = check_syntax(script)
             print('check_script_syntax', check_script_syntax)
             if check_script_syntax:
-                script_syntax_result = 1.0
+                script_syntax_result = 100.0
             print('script_syntax_result', script_syntax_result)
             # check test script status code coverage
             overall_coverage, coverage_detail = check_status_code_coverage(selected_apis_list, script)
@@ -152,27 +110,14 @@ def generate_test_script(data):
                 'selected_apis': selected_apis,
                 'generated_script': script
             }
-            check_result = None
-            check_parameter_prompt = get_prompt("check_parameter_type_correctness", parameter_context)
-            if model == "ChatGPT":
-                check_result = call_openai(check_parameter_prompt, model_version)
-            if model == "DeepSeek":
-                check_result = call_deepseek(check_parameter_prompt, model_version)
-            print('check result', check_result)
-            print('check result type', type(check_result))
-            result = extract_json_from_markdown(check_result)
-            check_result_json = json.loads(result)
-            data_type_coverage = check_result_json['coverage']
-            print('check data_type_coverage type', type(data_type_coverage))
-            print('check detail type', type(check_result_json['detail']))
-            data_type_detail = json.dumps(check_result_json['detail'], ensure_ascii=False)
-            print("conversion coverage:", data_type_coverage)
-            print(" detail JSON after conversion:", data_type_detail)
+            data_type_coverage, data_type_detail = calculate_data_type_coverage(parameter_context, model, model_version)
             add_script_sql = sqls['add_generate_script']
             prompt_json = json.dumps(prompt)
             params = (group_id, selected_apis, scenario_id, test_scenario, model, model_version, prompt_json,
-                      script, script, script_syntax_result, status_code_coverage, status_code_coverage_detail,
-                      data_type_coverage, data_type_detail, method_coverage, method_coverage_detail)
+                      script, script, script_syntax_result, script_syntax_result, status_code_coverage,
+                      status_code_coverage, status_code_coverage_detail, status_code_coverage_detail, data_type_coverage,
+                      data_type_coverage, data_type_detail, data_type_detail, method_coverage, method_coverage,
+                      method_coverage_detail, method_coverage_detail)
             add_script_sql_result = execute(add_script_sql, params)
             if add_script_sql_result:
                 log.info(f"save generated script successful: {add_script_sql_result}")
@@ -273,8 +218,6 @@ def execute_test_script(data):
         }
     sql = sqls['add_execution_result']
     params = (task_id, json.dumps(response_result, ensure_ascii=False))
-    # print('sql', sql)
-    # print('params', params)
     save_result = execute(sql, params)
     if save_result:
         log.info("save execution result success")
@@ -323,7 +266,6 @@ def parse_pytest_output(output):
         status = test['status']
         error_message = failure_reasons.get(name, '') if status == 'FAILED' else ''
         result[name] = {'status': status, 'error_message': error_message}
-    # print('result', result)
     return result
 
 def update_execution_result(case_data, execution_result):
@@ -367,14 +309,21 @@ def get_api_data(data):
     # api_data = []
     result = None
     url = data.get('api_swagger')
-    title = data.get('title')
+    title = data.get('api_title')
     query_swagger_sql = sqls['query_api_info']
     query_swagger_result = fetch_one(query_swagger_sql, url)
     if query_swagger_result:
         result = query_swagger_result['id']
         return result
     response = requests.get(url)
-    swagger_json = response.json()
+    if response.status_code != 200:
+        raise Exception(f"Swagger URL responded with {response.status_code}")
+    try:
+        swagger_json = response.json()
+    except Exception as e:
+        print("Raw response:", response.text)
+        raise Exception(f"Invalid JSON from swagger URL: {str(e)}")
+    # swagger_json = response.json()
     definitions = swagger_json.get("definitions", {})
     add_swagger_sql = sqls['add_api_info']
     params = (title, url)
@@ -458,7 +407,6 @@ def query_scenario_list(id):
     params = (id)
     query_sql = sqls['query_test_scenario']
     result = fetch_all(query_sql, params)
-    print("result", result)
     query_num_sql = sqls['query_scenario_num']
     query_num_result = fetch_one(query_num_sql, id)
     print("query_num_result", query_num_result)
@@ -514,28 +462,33 @@ def add_api_group(data):
 
 def generate_test_scenario(data):
     result = add_api_group(data)
-    print("check error--", result)
+    scenario_type = data.get('type')
+    if scenario_type:
+        # generate system level test scenario to evaluate metrics
+        prompt = get_prompt("generate_system_scenario_prompt", data)
+        print("---generate_system_scenario_prompt: ", prompt)
+        print("-------")
+    else:
+        print('scenario_type is', scenario_type)
+        # generate none system level test scenario to evaluate metrics
+        prompt = get_prompt("generate_test_scenario_prompt", data)
+        print("---generate_test_scenario_prompt: ", prompt)
+        print("-------")
     if result:
         # query_sql = sqls["check_test_scenario"]
         # query_result = fetch_one(query_sql, verify_result)
         # if query_result:
         #     return verify_result
-        prompt = get_prompt("generate_test_scenario_prompt", data)
-        print("---prompt: ", prompt)
-        print("-------")
+        # prompt = get_prompt("generate_test_scenario_prompt", data)
         model = data.get('model_name')
         model_version = data.get('model_version')
         scenario = None
         if model == "ChatGPT":
-            print("check path chatgpt", model)
             scenario = call_openai(prompt, model_version)
         if model == "DeepSeek":
-            print("check path deepseek", model)
             scenario = call_deepseek(prompt, model_version)
-        print("check error--------")
         group_id = result
         sql = sqls["add_test_scenario"]
-        print("check path1")
         matches = re.findall(r"(\d+)\.\s+(.*)", scenario)
         if not matches:
             log.error("No matches found in scenario text. Raw content:")
@@ -543,7 +496,7 @@ def generate_test_scenario(data):
         for num, title in matches:
             title = title.strip()
             print(f"Saving scenario: {title}")
-            res = execute(sql, (group_id, title, title, model, model_version))
+            res = execute(sql, (group_id, title, title, model, model_version, scenario_type))
             if res:
                 log.info(f"save scenario success: {title}")
             else:
@@ -564,7 +517,6 @@ def edit_test_scenario(data):
 def update_test_scenario_status(data):
     id = data.get("id")
     status = data.get("status")
-    print('status', status)
     sql = sqls["update_test_scenario_status"]
     result = execute(sql, (status, id))
     if result:
@@ -616,6 +568,7 @@ def query_detail(id):
     query_detail_sql = sqls['query_generation_detail']
     script_result = fetch_one(query_detail_sql, id)
     case_result = None
+    metrics_result = None
     if script_result:
         log.info("query script detail success")
         script_header = extract_script_head(script_result['last_version'])
@@ -629,11 +582,17 @@ def query_detail(id):
         if case_result:
             log.info("query script case detail success")
         else:
-            log.error(f"query script case detail success{case_result}")
+            log.error(f"query script case detail fail{case_result}")
+        query_metrics_sql = sqls['query_script_metrics']
+        metrics_result = fetch_one(query_metrics_sql, script_id)
+        if metrics_result:
+            log.info("query script metrics success")
+        else:
+            log.error(f"query script metrics fail{metrics_result}")
     else:
         log.error(f"query script  detail success{script_result}")
 
-    return {'script_result': script_result, 'case_result': case_result}
+    return {'script_result': script_result, 'case_result': case_result, 'metrics_result': metrics_result}
 
 def query_script_group_detail(id):
     query_detail_sql = sqls['query_script_group_detail']
@@ -643,8 +602,38 @@ def query_script_group_detail(id):
 def update_generation_script(data):
     id = data.get("id")
     script = data.get("script")
+    syntax_check_result = data.get('syntax_check_result')
+    # update syntax check result
+    script_syntax_result = 100.0
+    if syntax_check_result:
+        query_script_case_sql = sqls['query_script_case_num']
+        query_script_case_result = fetch_one(query_script_case_sql, id)
+        total = query_script_case_result['total']
+        valid_num = int(query_script_case_result['valid_count'] or 0)
+        script_syntax_result = round(valid_num / total * 100, 2)
+    # query script detail
+    query_detail_sql = sqls['query_script_detail_by_id']
+    script_result = fetch_one(query_detail_sql, (id))
+    selected_apis = script_result['spec_url']
+    selected_apis_list = json.loads(selected_apis)
+    model = script_result['model_name']
+    model_version = script_result['model_version']
+    # check test script status code coverage
+    overall_coverage, coverage_detail = check_status_code_coverage(selected_apis_list, script)
+    status_code_coverage = round(overall_coverage, 2)
+    converted_detail = convert_sets_to_lists(coverage_detail)
+    status_code_coverage_detail = json.dumps(converted_detail, ensure_ascii=False)
+    # check test script method coverage
+    method_coverage, method_coverage_detail = calculate_method_coverage(selected_apis_list, script)
+    # check test script data type correctness
+    parameter_context = {
+        'selected_apis': selected_apis,
+        'generated_script': script
+    }
+    data_type_coverage, data_type_detail = calculate_data_type_coverage(parameter_context, model, model_version)
     sql = sqls["update_generation_detail"]
-    result = execute(sql, (script, id))
+    result = execute(sql, (script, script_syntax_result, data_type_coverage, data_type_detail, status_code_coverage,
+                           status_code_coverage_detail, method_coverage, method_coverage_detail, id))
     if result:
         log.info("update script success")
         return True
@@ -657,15 +646,22 @@ def update_case_detail(data):
     script_id = data.get("script_id")
     new_mark_name = data.get("new_mark_name")
     old_mark_name = data.get("old_mark_name")
+    # check script syntax
+    check_script_syntax = check_syntax(case)
+    if check_script_syntax:
+        syntax_check_result = 0
+    else:
+        syntax_check_result = 1
     sql = sqls["update_script_case_detail"]
-    result = execute(sql, (case, new_mark_name, id))
+    result = execute(sql, (case, new_mark_name, syntax_check_result, id))
     if result:
         log.info("update script case success")
         query_full_script_sql = sqls['query_full_script']
         full_script = fetch_one(query_full_script_sql, script_id)['last_version']
         new_full_script = replace_case_function_body(full_script, old_mark_name, case)
         update_data = {'id': script_id,
-                       'script': new_full_script}
+                       'script': new_full_script,
+                       'syntax_check_result': syntax_check_result}
         update_full_script = update_generation_script(update_data)
         if update_full_script:
             log.info("update full script success")
@@ -714,18 +710,26 @@ def add_script_case(data):
     scenario_id = data.get('scenario_id')
     case_code = data.get('case_detail')
     mark_name = data.get('mark_name')
+    # check script syntax
+    check_script_syntax = check_syntax(case_code)
+    if check_script_syntax:
+        syntax_check_result = 0
+    else:
+        syntax_check_result = 1
     add_script_case_sql = sqls['add_script_case_detail']
     source_type = "MANUAL"
     add_script_case_res = execute(add_script_case_sql, (script_id, scenario_id, mark_name,
-                                                        case_code, case_code, source_type))
+                                                        case_code, case_code, source_type, syntax_check_result))
     if add_script_case_res:
         log.info(f"add script case success: {add_script_case_res}")
         # add new case script to full script
         query_full_script_sql = sqls['query_full_script']
         full_script = fetch_one(query_full_script_sql, script_id)['last_version']
         new_full_script = add_case_to_script(full_script, case_code)
+        print('new_full_script', new_full_script)
         update_data = {'id': script_id,
-                       'script': new_full_script}
+                       'script': new_full_script,
+                       'syntax_check_result': syntax_check_result}
         update_full_script = update_generation_script(update_data)
         if update_full_script:
             log.info("update full script success")
@@ -801,6 +805,40 @@ def update_case_execution_fail_reason(data):
     log.info("update case execution fail reason fail")
     return False
 
+def set_data_type_metrics(data):
+    script_id = data.get('id')
+    status = data.get('status')
+    metrics_sql = sqls['set_data_type_metrics']
+    result = execute(metrics_sql, (status, script_id))
+    if result:
+        return True
+    return False
+
+def set_method_coverage_metrics(data):
+    script_id = data.get('id')
+    status = data.get('status')
+    metrics_sql = sqls['set_method_coverage_metrics']
+    result = execute(metrics_sql, (status, script_id))
+    if result:
+        return True
+    return False
+
+def set_status_coverage_metrics(data):
+    script_id = data.get('id')
+    status = data.get('status')
+    metrics_sql = sqls['set_status_code_metrics']
+    result = execute(metrics_sql, (status, script_id))
+    if result:
+        return True
+    return False
+def set_syntax_metrics(data):
+    script_id = data.get('id')
+    status = data.get('status')
+    metrics_sql = sqls['set_syntax_metrics']
+    result = execute(metrics_sql, (status, script_id))
+    if result:
+        return True
+    return False
 
 
 

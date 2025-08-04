@@ -1,8 +1,10 @@
 add_generate_script: |
   Insert into llm_test.generated_script(group_id,spec_url,scenario_id,test_scenario,model_name,model_version,
-  prompt_name,original_script,last_version, syntax_correct, status_code_coverage, status_code_coverage_detail, 
-  data_type_correctness, param_type_check_detail, method_coverage, method_coverage_detail)
-  Values(%s, %s, %s, %s,%s,%s, %s,%s, %s, %s, %s, %s, %s, %s, %s, %s);
+  prompt_name,original_script,last_version, syntax_correct,syntax_correct_last, status_code_coverage,status_code_coverage_last,
+  status_code_coverage_detail_first_version,status_code_coverage_detail_last_version,data_type_correctness,data_type_correctness_last, 
+  param_type_check_detail_first_version,param_type_check_detail_last_version, method_coverage,method_coverage_last,
+  method_coverage_detail_first_version,method_coverage_detail_last_version)
+  Values(%s, %s, %s, %s,%s,%s, %s,%s, %s, %s, %s, %s, %s, %s, %s, %s,%s,%s,%s,%s,%s,%s,%s);
 update_script_syntax: |
   Update llm_test.generated_script set syntax_correct=%s, update_time = NOW() where id=%s;
 query_generate_script: |
@@ -19,14 +21,45 @@ query_list_num: |
   Select Count(id) as total from llm_test.generated_script;
 
 query_generation_detail: |
-  Select id, spec_url, test_scenario, model_name, model_version, last_version, edit_count from llm_test.generated_script where scenario_id= %s order by id desc;
+  Select id, spec_url, test_scenario, model_name, model_version, last_version, edit_count from llm_test.generated_script 
+  where scenario_id= %s order by id desc;
+
+query_script_detail_by_id: |
+  Select id, spec_url, model_name, model_version from llm_test.generated_script where id= %s order by id desc;
+
+query_script_metrics: |
+  Select syntax_correct_last, data_type_correctness_last, param_type_check_detail_last_version, status_code_coverage_last, 
+  status_code_coverage_detail_last_version, method_coverage_last, method_coverage_detail_last_version,
+  data_type_check_status,status_code_check_status,method_coverage_check_status
+  from llm_test.generated_script where id= %s order by id desc;
+
+set_data_type_metrics: |
+  Update llm_test.generated_script set data_type_check_status=%s, update_time = NOW() where id=%s;
+
+set_status_code_metrics: |
+  Update llm_test.generated_script set status_code_check_status=%s, update_time = NOW() where id=%s;
+
+set_method_coverage_metrics: |
+  Update llm_test.generated_script set method_coverage_check_status=%s, update_time = NOW() where id=%s;
+
+set_syntax_metrics: |
+  Update llm_test.script_case_detail set syntax_check_status=%s, update_time = NOW() where id=%s;
 
 update_generation_detail: |
-  Update llm_test.generated_script set last_version=%s, edit_count = edit_count + 1, update_time = NOW() where id=%s;
+  Update llm_test.generated_script set last_version=%s, syntax_correct_last=%s, data_type_correctness_last=%s,
+  param_type_check_detail_last_version=%s, data_type_check_status=NULL,status_code_coverage_last=%s,
+  status_code_check_status=NULL,status_code_coverage_detail_last_version=%s,
+  method_coverage_last=%s,method_coverage_detail_last_version=%s,method_coverage_check_status=NULL, 
+  edit_count = edit_count + 1, update_time = NOW() where id=%s;
+
+query_script_case_num: |
+  SELECT COUNT(*) AS total, 
+  SUM(CASE WHEN syntax_check_result = 0 THEN 1 ELSE 0 END) AS valid_count
+  FROM script_case_detail WHERE script_id  = %s;
 
 query_script_case_detail: |
   Select id, script_id, scenario_id, mark_name, last_version, edit_count, last_execution_status, last_error_message, 
-  source_type, status, last_fail_reason
+  source_type, status, last_fail_reason, syntax_check_result
   from llm_test.script_case_detail where script_id=%s and scenario_id=%s order by id desc;
   
 query_scenario_group: |
@@ -53,11 +86,13 @@ add_scenario_group_relations: |
   INSERT INTO llm_test.group_scenario_relations (group_id, scenario_id) VALUES (%s, %s);
 
 add_script_case_detail: |
-  Insert into llm_test.script_case_detail(script_id,scenario_id,mark_name,original_code,last_version,source_type, syntax_check_result)
+  Insert into llm_test.script_case_detail(script_id,scenario_id,mark_name,original_code,last_version,source_type, 
+  syntax_check_result)
   Values(%s, %s, %s, %s, %s, %s, %s);
 
 update_script_case_detail: |
-  Update llm_test.script_case_detail set last_version=%s,mark_name=%s, edit_count = edit_count + 1, update_time = NOW() where id=%s;
+  Update llm_test.script_case_detail set last_version=%s,mark_name=%s,syntax_check_result=%s, edit_count = edit_count + 1, 
+  update_time = NOW() where id=%s;
 
 update_script_case_status: |
   Update llm_test.script_case_detail set status=%s, update_time = NOW() where id=%s;
@@ -202,7 +237,7 @@ query_scenario_by_scenario: |
   Select id from llm_test.test_scenario where group_id=%s and last_version=%s;
 
 add_test_scenario: |
-  Insert into llm_test.test_scenario(group_id, first_version, last_version, model_name, model_version) Values(%s, %s, %s, %s, %s);
+  Insert into llm_test.test_scenario(group_id, first_version, last_version, model_name, model_version, is_system_scenario) Values(%s, %s, %s, %s, %s, %s);
 
 update_test_scenario: |
   Update llm_test.test_scenario set last_version=%s, edit_count = edit_count + 1, update_time = NOW() where id=%s;

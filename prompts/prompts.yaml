@@ -31,10 +31,29 @@ generate_test_scenario_prompt:
      Make sure all parameter combinations, data types, and status code responses are considered.
     Swagger document :{{selected_apis}}
     Return only a numbered list of the final test scenario titles. 
-
+generate_system_scenario_prompt:
+  system: |
+    You are a testing expert who specialises in writing system-level test scenarios based on API 
+    specifications. You must only return a clean, numbered list of the final test scenarios in plain text format. 
+    Do not include any explanations, comments, or formatting other than the list. Do not include test scenarios that 
+    involve only a single API call, even if the call is invalid.All invalid scenarios must reflect logically incorrect 
+    sequences involving multiple API calls. Each scenario must be a meaningful or logically flawed API request sequence 
+    scenario, not just API path combinations.
+  user: |
+    Given the following API specifications, generate comprehensive system-level test scenarios that meet the following 
+    requirements:
+    1. Carefully analyse all provided APIs, including their upstream and downstream dependencies.
+    2. Include both valid (logically correct and meaningful) and invalid (logically incorrect, misordered, or incomplete)
+    API request sequences.
+    3. Ensure that all provided API operation sequence combinations are considered, including edge cases, misuse 
+    patterns, and failure paths.
+    4. Do not include any single API call test scenarios.
+    API specification: {{selected_apis}}
+    Return only a clean, numbered list of the final operation sequence-based test scenarios.
 check_parameter_type_correctness:
   system: |
-    You are an expert assistant specialized in analyzing test scripts against API specifications for parameter data type coverage. 
+    You are an expert assistant specialized in analyzing test scripts against API specifications for parameter data type
+    coverage. 
     You must always return a valid JSON object without any extra commentary or explanation.
   user: |
     Analyze the test script against the API specifications and provide a coverage report with the following requirements:
