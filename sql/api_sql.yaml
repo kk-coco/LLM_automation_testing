@@ -1,10 +1,9 @@
 add_generate_script: |
   Insert into llm_test.generated_script(group_id,spec_url,scenario_id,test_scenario,model_name,model_version,
-  prompt_name,original_script,last_version, syntax_correct,syntax_correct_last, status_code_coverage,status_code_coverage_last,
-  status_code_coverage_detail_first_version,status_code_coverage_detail_last_version,data_type_correctness,data_type_correctness_last, 
+  prompt_name,original_script,last_version, syntax_correct,syntax_correct_last,data_type_correctness,data_type_correctness_last, 
   param_type_check_detail_first_version,param_type_check_detail_last_version, method_coverage,method_coverage_last,
   method_coverage_detail_first_version,method_coverage_detail_last_version)
-  Values(%s, %s, %s, %s,%s,%s, %s,%s, %s, %s, %s, %s, %s, %s, %s, %s,%s,%s,%s,%s,%s,%s,%s);
+  Values(%s,%s, %s,%s, %s, %s, %s, %s, %s, %s, %s, %s,%s,%s,%s,%s,%s,%s,%s);
 update_script_syntax: |
   Update llm_test.generated_script set syntax_correct=%s, update_time = NOW() where id=%s;
 query_generate_script: |
@@ -25,12 +24,12 @@ query_generation_detail: |
   where scenario_id= %s order by id desc;
 
 query_script_detail_by_id: |
-  Select id, spec_url, model_name, model_version from llm_test.generated_script where id= %s order by id desc;
+  Select id, test_scenario,status_code_coverage, spec_url, model_name, model_version from llm_test.generated_script where id= %s order by id desc;
 
 query_script_metrics: |
   Select syntax_correct_last, data_type_correctness_last, param_type_check_detail_last_version, status_code_coverage_last, 
   status_code_coverage_detail_last_version, method_coverage_last, method_coverage_detail_last_version,
-  data_type_check_status,status_code_check_status,method_coverage_check_status
+  data_type_check_status,status_code_check_status,method_coverage_check_status,review_status
   from llm_test.generated_script where id= %s order by id desc;
 
 set_data_type_metrics: |
@@ -41,17 +40,29 @@ set_status_code_metrics: |
 
 set_method_coverage_metrics: |
   Update llm_test.generated_script set method_coverage_check_status=%s, update_time = NOW() where id=%s;
+set_data_type_metrics_last: |
+  Update llm_test.generated_script set data_type_correctness_last=%s, update_time = NOW() where id=%s;
 
+set_status_code_metrics_last: |
+  Update llm_test.generated_script set status_code_coverage_last=%s, update_time = NOW() where id=%s;
+
+set_method_coverage_metrics_last: |
+  Update llm_test.generated_script set method_coverage_last=%s, update_time = NOW() where id=%s;
 set_syntax_metrics: |
   Update llm_test.script_case_detail set syntax_check_status=%s, update_time = NOW() where id=%s;
 
 update_generation_detail: |
   Update llm_test.generated_script set last_version=%s, syntax_correct_last=%s, data_type_correctness_last=%s,
-  param_type_check_detail_last_version=%s, data_type_check_status=NULL,status_code_coverage_last=%s,
-  status_code_check_status=NULL,status_code_coverage_detail_last_version=%s,
+  param_type_check_detail_last_version=%s, data_type_check_status=NULL, status_code_check_status=NULL,
   method_coverage_last=%s,method_coverage_detail_last_version=%s,method_coverage_check_status=NULL, 
   edit_count = edit_count + 1, update_time = NOW() where id=%s;
-
+update_status_coverage: |
+  Update llm_test.generated_script set status_code_check_status=NULL,status_code_coverage_last=%s,
+  status_code_coverage_detail_last_version=%s, update_time = NOW() where id=%s;
+set_status_coverage: |
+  Update llm_test.generated_script set status_code_coverage=%s,status_code_coverage_last=%s,
+  status_code_coverage_detail_first_version=%s,status_code_coverage_detail_last_version=%s,
+  update_time = NOW() where id=%s;
 query_script_case_num: |
   SELECT COUNT(*) AS total, 
   SUM(CASE WHEN syntax_check_result = 0 THEN 1 ELSE 0 END) AS valid_count
@@ -60,7 +71,7 @@ query_script_case_num: |
 query_script_case_detail: |
   Select id, script_id, scenario_id, mark_name, last_version, edit_count, last_execution_status, last_error_message, 
   source_type, status, last_fail_reason, syntax_check_result
-  from llm_test.script_case_detail where script_id=%s and scenario_id=%s order by id desc;
+  from llm_test.script_case_detail where script_id=%s and scenario_id=%s;
   
 query_scenario_group: |
   Select id, scenarios from llm_test.scenario_group  where scenarios=%s order by id desc;
@@ -158,13 +169,19 @@ query_api_details: |
     a.method,
     a.parameters,
     a.responses,
-    MAX(gar.group_id) as group_id
-  FROM llm_test.api_details a
-  LEFT JOIN llm_test.group_api_relations gar ON gar.api_id = a.id
-  LEFT JOIN llm_test.test_scenario ts ON ts.group_id = gar.group_id
-  WHERE a.swagger_id = %s
-  GROUP BY a.id
-  ORDER BY a.id DESC;
+    MAX(CASE WHEN ag.is_system_scenario = 0 THEN gar.group_id END) AS unit_group_id,
+    MAX(CASE WHEN ag.is_system_scenario = 1 THEN gar.group_id END) AS system_group_id
+    FROM llm_test.api_details a
+    LEFT JOIN llm_test.group_api_relations gar 
+        ON gar.api_id = a.id
+    LEFT JOIN llm_test.api_group ag
+        ON ag.id = gar.group_id
+    LEFT JOIN llm_test.test_scenario ts 
+        ON ts.group_id = gar.group_id
+    WHERE a.swagger_id = %s
+    GROUP BY a.id
+    ORDER BY a.id DESC;
+
 
 #  Select id, api_path, summary, method, parameters, responses from llm_test.api_details where swagger_id=%s order by id desc;
 #  Select id, api_path, summary, method, parameters, responses from llm_test.api_details where swagger_id=%s order by id desc limit %s offset %s;
@@ -180,33 +197,45 @@ query_used_api_num: |
 
 
 query_group: |
-  Select id, apis from llm_test.api_group where apis=%s order by id desc;
+  Select id, apis, group_name,is_system_scenario from llm_test.api_group where apis=%s order by id desc;
 
 query_group_by_id: |
-  Select id, apis from llm_test.api_group where id=%s order by id desc;
+  Select id, apis, group_name,is_system_scenario from llm_test.api_group where id=%s order by id desc;
 
 add_group: |
-  Insert into llm_test.api_group(apis) Values(%s);
+  Insert into llm_test.api_group(apis, group_name, is_system_scenario) Values(%s,%s,%s);
 
 add_group_relations: |
   INSERT INTO llm_test.group_api_relations (group_id, api_id) VALUES (%s, %s);
 
 query_test_scenario: |
   SELECT
-  a.id,
-  a.group_id,
-  a.last_version,
-  a.status,
-  a.edit_count,
-  CASE 
-    WHEN EXISTS (
-      SELECT 1 FROM llm_test.generated_script gs WHERE gs.scenario_id = a.id
-    ) THEN a.id
-    ELSE NULL
-  END AS scenario_id
-  FROM llm_test.test_scenario a
-  WHERE a.group_id = %s
-  ORDER BY a.id DESC;
+    a.id,
+    a.group_id,
+    a.scenario_title,
+    a.review_status,
+    a.last_version,
+    a.status,
+    a.edit_count,
+    CASE 
+        WHEN EXISTS (
+            SELECT 1 
+            FROM llm_test.generated_script gs 
+            WHERE gs.scenario_id = a.id
+        ) 
+        THEN (
+            SELECT gs.review_status
+            FROM llm_test.generated_script gs
+            WHERE gs.scenario_id = a.id
+            ORDER BY gs.id DESC
+            LIMIT 1
+        )
+        ELSE NULL
+    END AS script_review_status
+    FROM llm_test.test_scenario a
+    WHERE a.group_id = %s
+    ORDER BY a.id DESC;
+
 
 
 #  Select id, group_id, last_version, status, edit_count from llm_test.test_scenario where group_id=%s order by id desc;
@@ -216,7 +245,8 @@ check_test_scenario: |
   Select id, group_id, last_version from llm_test.test_scenario where group_id=%s order by id desc;
 
 query_scenario_num: |
-  SELECT COUNT(*) AS total, 
+  SELECT
+  COUNT(*) AS total,
   SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS valid_count,
   SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS invalid_count, 
   SUM(CASE WHEN model_version = '' THEN 1 ELSE 0 END) AS added_num,
@@ -234,16 +264,17 @@ query_used_scenario_num: |
 
 
 query_scenario_by_scenario: |
-  Select id from llm_test.test_scenario where group_id=%s and last_version=%s;
+  Select id from llm_test.test_scenario where group_id=%s and scenario_title=%s and last_version=%s;
 
 add_test_scenario: |
-  Insert into llm_test.test_scenario(group_id, first_version, last_version, model_name, model_version, is_system_scenario) Values(%s, %s, %s, %s, %s, %s);
+  Insert into llm_test.test_scenario(group_id,scenario_title, first_version, last_version, model_name, model_version, 
+  is_system_scenario) Values(%s, %s, %s, %s, %s, %s, %s);
 
 update_test_scenario: |
-  Update llm_test.test_scenario set last_version=%s, edit_count = edit_count + 1, update_time = NOW() where id=%s;
+  Update llm_test.test_scenario set scenario_title=%s, last_version=%s, edit_count = edit_count + 1, update_time = NOW() where id=%s;
 
 update_test_scenario_status: |
-  Update llm_test.test_scenario set status=%s, update_time = NOW() where id=%s;
+  Update llm_test.test_scenario set status=%s,review_status=1, update_time = NOW() where id=%s;
 
 query_api: |
   Select  id, swagger_id, api_path, summary, method, parameters, responses from llm_test.api_details  where id IN ({});

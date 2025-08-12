@@ -18,6 +18,11 @@ generate_test_scenario_prompt:
     You are a testing expert who specialises in writing precise and comprehensive test scenarios based on API 
     specifications. You must always return only the final test scenarios in a clean numbered list format. Do not 
     include any explanations, comments, or formatting other than the list.
+    Each test scenario should be presented as follows:
+      1. Scenario Name: <concise descriptive name>
+         Scenario Description: <detailed description of the scenario including sequence and logic>
+      2. Scenario Name: ...
+         Scenario Description: ...
   user: |
     Given the following API specifications, write comprehensive test scenarios that meet these requirements:
     1. Strictly follow the defined API parameters and expected responses.
@@ -39,6 +44,11 @@ generate_system_scenario_prompt:
     involve only a single API call, even if the call is invalid.All invalid scenarios must reflect logically incorrect 
     sequences involving multiple API calls. Each scenario must be a meaningful or logically flawed API request sequence 
     scenario, not just API path combinations.
+    Each test scenario should be presented as follows:
+      1. Scenario Name: <concise descriptive name>
+         Scenario Description: <detailed description of the scenario including sequence and logic>
+      2. Scenario Name: ...
+         Scenario Description: ...
   user: |
     Given the following API specifications, generate comprehensive system-level test scenarios that meet the following 
     requirements:
@@ -49,24 +59,27 @@ generate_system_scenario_prompt:
     patterns, and failure paths.
     4. Do not include any single API call test scenarios.
     API specification: {{selected_apis}}
-    Return only a clean, numbered list of the final operation sequence-based test scenarios.
+    Return only a clean, numbered list of the final operation sequence-based test scenarios, each with a scenario name 
+    and description as specified.
 check_parameter_type_correctness:
   system: |
     You are an expert assistant specialized in analyzing test scripts against API specifications for parameter data type
     coverage. 
     You must always return a valid JSON object without any extra commentary or explanation.
   user: |
-    Analyze the test script against the API specifications and provide a coverage report with the following requirements:
+    Analyze the test script against the API specifications only for the APIs relevant to the provided scenario and 
+    provide a coverage report with the following requirements:
     1. Strictly check parameter data types in the script against API specs only
-    2. Output must include:
+    2. Only include parameters that are defined in the API specifications for the APIs used in the scenario.
+    3. Output must include:
       - "coverage": overall percentage based on all matched parameters across endpoints
-      - "detail": an object with per-endpoint breakdown including:
+      - "detail": an object with per-endpoint (method + path) breakdown including:
         * "matched": number of parameters with correctly matched types
         * "total": total number of parameters defined in the API spec
         * "coverage_percent": matched ÷ total × 100
         * "mismatches": a list of mismatched parameters showing expected and actual types
-    3. Only include parameters that are defined in the API specifications.
-    4. Output must be **strictly** formatted like this (replace values with actual results):
+    4. Only include parameters that are defined in the API specifications.
+    5. Output must be **strictly** formatted like this (replace values with actual results):
     {
       "coverage": XX,
       "detail":{
@@ -88,8 +101,118 @@ check_parameter_type_correctness:
       } 
     }
     API specifications: {{selected_apis}}
+    Scenario: {{scenario}}
     Test script: {{generated_script}}
     Respond with only the formatted JSON object. Do not include any other text.
-
-
+check_status_code_coverage_by_script:
+  system: |
+    You are an expert assistant specialized in analyzing test scripts against API specifications for status code coverage. 
+    You must always return a valid JSON object without any extra commentary or explanation.
+  user: |
+    Analyze the test script against the API specifications and provide a coverage report with the following requirements:
+    1. Strictly check response status codes in the script against API specs only
+    2. Output must include:
+      - "coverage": The "coverage" must be calculated strictly as: (sum of used status codes across all endpoints ÷ sum 
+    of expected status codes across all endpoints) × 100, rounded to 2 decimal places. Do not calculate this as an 
+    average of per-endpoint coverage.
+      - Do not remove duplicates across endpoints
+      - Do not take the average of endpoint coverage
+      - Count each status code per endpoint even if it repeats in another endpoint
+      - "detail": an object with per-endpoint (method + path) breakdown including:
+        * "expected":  list of  response status codes defined in the API specification for this endpoint
+        * "used_in_script": list of response status codes actually asserted in the test script for this endpoint
+        * "coverage_percent": (used ÷ expected) × 100 for this endpoint
+    3. Do not include any status codes not defined in the API specifications, even if they appear in the test script.
+    4. Identify endpoints by their HTTP method and path in the format: `"METHOD /api/path"`.
+    5. Output must be **strictly** formatted like this (replace values with actual results):
+    {
+      "coverage": XX,
+      "detail":{
+        "api_path_1": {
+          "expected": ["XX", "XX",...],
+          "used_in_script": ["XX", "XX",...],
+          "coverage_percent": X,
+        },
+          "api_path_2": {
+            ...
+          }
+      } 
+    }
+    API specifications: {{selected_apis}}
+    Scenario: {{scenario}}
+    Test script: {{generated_script}}
+    Respond with only the formatted JSON object. Do not include any other text.
+check_status_code_coverage_by_execution_results:
+  system: |
+    You are an expert assistant specialized in analyzing test script execution results against API specifications for 
+    status code coverage. 
+    You must always return a valid JSON object without any extra commentary or explanation.
+  user: |
+    Analyze the execution results against the API specifications and provide a coverage report with the following requirements:
+    1. Strictly check response status codes in the execution result against API specs only
+    2. Calculation rules:
+      - Identify all API operations involved in the scenario.
+      - For each involved API operation, list all expected response codes.
+      - From the execution results, identify which response codes were actually covered.
+      - Calculate coverage as: (Number of response codes actually covered in execution results)  divided by (Total 
+        number of expected response codes for all involved API operations) multiplied by 100%.
+    3. Output must include:
+      - "coverage": The calculation rule mentioned above
+      - "detail": an object with per-endpoint (method + path) breakdown including:
+        * "expected":  list of  response status codes defined in the API specification for this endpoint
+        * "covered_after_execution": list of response status codes actually asserted after execution for this endpoint
+    4. Identify endpoints by their HTTP method and path in the format: `"METHOD /api/path"`.
+    5. Output must be **strictly** formatted like this (replace values with actual results):
+    {
+      "coverage": XX,
+      "detail":{
+        "api_path_1": {
+          "expected": ["XX", "XX",...],
+          "covered_after_execution": ["XX", "XX",...]
+        },
+          "api_path_2": {
+            ...
+          }
+      } 
+    }
+    API specifications: {{selected_apis}}
+    Scenario: {{scenario}}
+    Execution result: {{execution_result}}
+    Respond with only the formatted JSON object. Do not include any other text.
+check_method_coverage:
+  system: |
+    You are an expert assistant specialized in analyzing test scripts against Scenario and API specifications for method
+    coverage. 
+    You must always return a valid JSON object without any extra commentary or explanation.
+  user: |
+    Analyze the test script against the scenario, API specifications and provide a method coverage report with the 
+    following requirements:
+    1. Only evaluate HTTP method + path combinations that are explicitly described in the Scenario AND defined in the 
+    API specifications.
+    2. Output must include:
+      - "coverage": (number of expected API operations that appear in the script ÷ total expected API operations) × 100
+      - "expected":  list of API operations (method + path) that are both mentioned in the Scenario and defined in the 
+       API specifications
+      - "used_in_script": subset of the above list that are actually used in the test script
+    3. Do not include:
+      - Any API operations that are only found in the API specifications but not mentioned in the scenario
+      - Any API operations that are used in the script but are not mentioned in the scenario
+    4. Output must be strictly formatted like this (replace values with actual results):
+    {
+      "coverage": XX,
+      "expected": [
+          "METHOD /api_path_1",
+          "METHOD /api_path_2",
+          ...
+      ],
+      "used_in_script": [
+          "METHOD /api_path_1",
+          "METHOD /api_path_2",
+          ...
+      ]
+    }
+    Scenario: {{scenario}}
+    API specifications: {{selected_apis}}
+    Test script: {{generated_script}}
+    Respond with only the formatted JSON object. Do not include any other text.
 

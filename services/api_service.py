@@ -1,16 +1,9 @@
 import json
 import re
-import os
 import subprocess
 import tempfile
-
 import requests
-from dotenv import load_dotenv
-from openai import OpenAI
 from utils.db import execute, fetch_one, fetch_all
-import openai
-import time
-
 from utils.llm import call_openai, call_deepseek
 from utils.logging import Logger
 from utils.prompt_loader import get_prompt
@@ -56,6 +49,39 @@ def add_scenario_group(data):
     log.info("save group scenarios fail")
     return new_result
 
+def extract_cases(script_text):
+    lines = script_text.splitlines(keepends=True)
+    case_blocks = []
+    func_names = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.strip().startswith("@"):
+            i += 1
+            if i < len(lines) and re.match(r'^\s*def\s+test_\w+', lines[i]):
+                i += 1
+            continue
+        match = re.match(r'^\s*def\s+(test_\w+)\s*\(.*?\):', line)
+        if match:
+            func_name = match.group(1)
+            start = i
+            i += 1
+            while i < len(lines):
+                next_line = lines[i]
+                if next_line.strip() == "":
+                    i += 1
+                    continue
+                if not lines[i].startswith(" ") or lines[i].startswith("\t"):
+                    break
+                i += 1
+            end = i
+            func_body = "".join(lines[start:end])
+            func_names.append(func_name)
+            case_blocks.append(func_body)
+        else:
+            i += 1
+    return func_names, case_blocks
+
 def generate_test_script(data):
     selected_scenarios = data.get('selected_scenarios')
     group_id = add_scenario_group(selected_scenarios)
@@ -96,26 +122,25 @@ def generate_test_script(data):
             if check_script_syntax:
                 script_syntax_result = 100.0
             print('script_syntax_result', script_syntax_result)
+            parameter_context = {
+                'selected_apis': selected_apis,
+                'generated_script': script,
+                'scenario': test_scenario
+            }
             # check test script status code coverage
-            overall_coverage, coverage_detail = check_status_code_coverage(selected_apis_list, script)
-            status_code_coverage = round(overall_coverage, 2)
-            converted_detail = convert_sets_to_lists(coverage_detail)
-            status_code_coverage_detail = json.dumps(converted_detail, ensure_ascii=False)
+            # status_code_coverage, status_code_coverage_detail = check_status_code_coverage_by_script(parameter_context,
+            #                                                                                          model,
+            #                                                                                          model_version)
             # check test script method coverage
-            method_coverage, method_coverage_detail = calculate_method_coverage(selected_apis_list, script)
+            method_coverage, method_coverage_detail = calculate_method_coverage(parameter_context, model, model_version)
             print('method_coverage', method_coverage)
             print('method_coverage_detail', method_coverage_detail)
             # check test script data type correctness
-            parameter_context = {
-                'selected_apis': selected_apis,
-                'generated_script': script
-            }
             data_type_coverage, data_type_detail = calculate_data_type_coverage(parameter_context, model, model_version)
             add_script_sql = sqls['add_generate_script']
             prompt_json = json.dumps(prompt)
             params = (group_id, selected_apis, scenario_id, test_scenario, model, model_version, prompt_json,
-                      script, script, script_syntax_result, script_syntax_result, status_code_coverage,
-                      status_code_coverage, status_code_coverage_detail, status_code_coverage_detail, data_type_coverage,
+                      script, script, script_syntax_result, script_syntax_result, data_type_coverage,
                       data_type_coverage, data_type_detail, data_type_detail, method_coverage, method_coverage,
                       method_coverage_detail, method_coverage_detail)
             add_script_sql_result = execute(add_script_sql, params)
@@ -130,19 +155,20 @@ def generate_test_script(data):
                     script_id = query_result['id']
                     script_text = query_result['last_version']
                     # extract function name and case body
-                    pattern = re.compile(
-                        r'^def\s+(test_\w+)\s*\(.*?\):\n'  
-                        r'(?:^[ \t]+.*(?:\n|$))*'
-                        , re.MULTILINE
-                    )
-                    func_names = []
-                    case_blocks = []
-                    for match in pattern.finditer(script_text):
-                        func_names.append(match.group(1))
-                        start_pos = match.start()
-                        next_match = next(pattern.finditer(script_text, match.end()), None)
-                        end_pos = next_match.start() if next_match else len(script_text)
-                        case_blocks.append(script_text[start_pos:end_pos])
+                    # pattern = re.compile(
+                    #     r'^def\s+(test_\w+)\s*\(.*?\):\n'
+                    #     r'(?:^[ \t]+.*(?:\n|$))*'
+                    #     , re.MULTILINE
+                    # )
+                    # func_names = []
+                    # case_blocks = []
+                    # for match in pattern.finditer(script_text):
+                    #     func_names.append(match.group(1))
+                    #     start_pos = match.start()
+                    #     next_match = next(pattern.finditer(script_text, match.end()), None)
+                    #     end_pos = next_match.start() if next_match else len(script_text)
+                    #     case_blocks.append(script_text[start_pos:end_pos])
+                    func_names, case_blocks = extract_cases(script_text)
                     if len(func_names) != len(case_blocks):
                         log.warning(f"Mismatch between marks ({len(func_names)}) and functions ({len(case_blocks)})")
                     valid_case_count = 0
@@ -191,11 +217,13 @@ def execute_test_script(data):
     script_code = data.get('script')
     task_id = data.get('task_id')
     case_name = data.get('case_name')
+    print('case_name', case_name)
     with tempfile.NamedTemporaryFile(mode='w', suffix=".py", delete=False) as tmp_file:
         tmp_file.write(script_code)
         tmp_path = tmp_file.name
     try:
-        command = ["pytest", tmp_path, "-v", "--tb=short"]
+        # command = ["pytest", tmp_path, "-v", "--tb=short"]
+        command = ["pytest", tmp_path, "-v", "--tb=long", "-s"]
         if case_name:
             command += ["-k", case_name]
         result = subprocess.run(
@@ -208,6 +236,7 @@ def execute_test_script(data):
         response_result["stdout"] = result.stdout
         response_result["stderr"] = result.stderr
         response_result["returncode"] = result.returncode
+        print('execution result', result.stdout)
 
     except subprocess.TimeoutExpired:
         response_result["success"] = False
@@ -216,6 +245,44 @@ def execute_test_script(data):
             "success": False,
             "error": "Execution timed out"
         }
+    # query script detail
+    query_detail_sql = sqls['query_script_detail_by_id']
+    script_result = fetch_one(query_detail_sql, (task_id))
+    selected_apis = script_result['spec_url']
+    model = script_result['model_name']
+    model_version = script_result['model_version']
+    scenario = script_result['test_scenario']
+    old_status_code_coverage = script_result['status_code_coverage']
+    if result.returncode:
+        parameter_context = {
+            'selected_apis': selected_apis,
+            'scenario': scenario,
+            'execution_result': result.stdout
+        }
+        prompt_text = get_prompt("check_status_code_coverage_by_execution_results", parameter_context)
+    else:
+        parameter_context = {
+            'selected_apis': selected_apis,
+            'scenario': scenario,
+            'generated_script': script_result
+        }
+        prompt_text = get_prompt("check_status_code_coverage_by_script", parameter_context)
+    status_code_coverage, status_code_coverage_detail = check_status_code_coverage(model, model_version, prompt_text)
+    print('status_code_coverage', status_code_coverage)
+    print('status_code_coverage_detail', status_code_coverage_detail)
+    if old_status_code_coverage:
+        params = (status_code_coverage, status_code_coverage_detail, task_id)
+        sql = sqls["update_status_coverage"]
+    else:
+        sql = sqls["set_status_coverage"]
+        params = (status_code_coverage, status_code_coverage, status_code_coverage_detail, status_code_coverage_detail,
+                  task_id)
+
+    update_status_result = execute(sql, params)
+    if update_status_result:
+        log.info("update script status code coverage success")
+    else:
+        log.info("update script status code coverage fail")
     sql = sqls['add_execution_result']
     params = (task_id, json.dumps(response_result, ensure_ascii=False))
     save_result = execute(sql, params)
@@ -408,7 +475,7 @@ def query_scenario_list(id):
     query_sql = sqls['query_test_scenario']
     result = fetch_all(query_sql, params)
     query_num_sql = sqls['query_scenario_num']
-    query_num_result = fetch_one(query_num_sql, id)
+    query_num_result = fetch_one(query_num_sql, (id))
     print("query_num_result", query_num_result)
     total = query_num_result['total']
     valid_num = query_num_result['valid_count']
@@ -431,18 +498,20 @@ def query_scenario_list(id):
     return {"scenario_list": result, "api_info": api_info,
             'total': total, 'api_swagger': api_swagger,'used': used, 'unused': unused,
             'api_title': api_title, 'valid_num': int(valid_num), 'edit_num': int(edit_num),
-            'invalid_num': int(invalid_num), 'added_num': int(added_num)}
+            'invalid_num': int(invalid_num), 'added_num': int(added_num), "group_result": group_result}
 
 def add_api_group(data):
     api_ids = [api['id'] for api in data['selected_apis']]
     api_ids_sorted = sorted(api_ids)
     api_ids_json = json.dumps(api_ids_sorted)
+    group_name = data.get('group_name')
+    scenario_type = data.get('type')
     # result = fetch_one(sql, api_ids_json)
     # print("check error result", result)
     # if result:
     #     return result['id']
     add_sql = sqls["add_group"]
-    add_res = execute(add_sql, api_ids_json)
+    add_res = execute(add_sql, (api_ids_json, group_name, scenario_type))
     new_result = None
     if add_res:
         log.info("save group apis success")
@@ -489,26 +558,35 @@ def generate_test_scenario(data):
             scenario = call_deepseek(prompt, model_version)
         group_id = result
         sql = sqls["add_test_scenario"]
-        matches = re.findall(r"(\d+)\.\s+(.*)", scenario)
+        # matches = re.findall(r"(\d+)\.\s+(.*)", scenario)
+        pattern = re.compile(
+            r"(\d+)\.\s*Scenario Name:\s*(.+?)\s*Scenario Description:\s*((?:.+\n?)+?)(?=\n\d+\.|$)",
+            re.MULTILINE
+        )
+        matches = pattern.findall(scenario)
         if not matches:
             log.error("No matches found in scenario text. Raw content:")
             log.error(repr(scenario))
-        for num, title in matches:
+        for num, title, description in matches:
             title = title.strip()
+            description = description.strip().replace('\n', ' ')
             print(f"Saving scenario: {title}")
-            res = execute(sql, (group_id, title, title, model, model_version, scenario_type))
+            res = execute(sql, (group_id, title, description, description, model, model_version, scenario_type))
             if res:
-                log.info(f"save scenario success: {title}")
+                log.info(f"save scenario title success: {title}")
+                log.info(f"save scenario description success: {description}")
             else:
                 log.info(f"save scenario fail: {title}")
+                log.info(f"save scenario description success: {description}")
         return group_id
     return None
 
 def edit_test_scenario(data):
     id = data.get("id")
     title = data.get("edit_title")
+    description = data.get("edit_description")
     sql = sqls["update_test_scenario"]
-    result = execute(sql, (title, id))
+    result = execute(sql, (title,description, id))
     if result:
         log.info("update scenario success")
         return True
@@ -527,6 +605,7 @@ def update_test_scenario_status(data):
 def add_test_scenario(data):
     group_id = data.get("group_id")
     title = data.get("title")
+    description = data.get('description')
     model_name = ""
     if data.get("model_name"):
         model_name = data.get("model_name")
@@ -534,11 +613,11 @@ def add_test_scenario(data):
     if data.get("model_version"):
         model_version = data.get("model_version")
     check_sql = sqls["query_scenario_by_scenario"]
-    check_result = fetch_one(check_sql, (group_id, title))
+    check_result = fetch_one(check_sql, (group_id, title, description))
     if check_result:
         return {'success': False, 'message': 'Scenario already exists'}
     sql = sqls["add_test_scenario"]
-    result = execute(sql, (group_id, title, title, model_name, model_version))
+    result = execute(sql, (group_id, title, description, description, model_name, model_version))
     if result:
         log.info("add new scenario success")
         return {'success': True}
@@ -558,9 +637,40 @@ def load_generation_list(offset, page_size):
 def extract_script_head(script: str):
     lines = script.splitlines()
     head_lines = []
-    for line in lines:
-        if line.strip().startswith("def test_"):
-            break
+    buffer = []
+    collecting_decorator = False
+    for i in range(len(lines)):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            if collecting_decorator:
+                buffer.append(line)
+            else:
+                head_lines.append(line)
+            continue
+        # decorators
+        if stripped.startswith("@"):
+            buffer.append(line)
+            collecting_decorator = True
+            continue
+        # function
+        func_match = re.match(r"def\s+(\w+)\s*\(", stripped)
+        if func_match:
+            func_name = func_match.group(1)
+            if collecting_decorator:
+                buffer.append(line)
+                head_lines.extend(buffer)
+                buffer = []
+                collecting_decorator = False
+                continue
+            elif func_name.startswith("test_"):
+                break
+            else:
+                head_lines.append(line)
+                continue
+        if collecting_decorator:
+            buffer = []
+            collecting_decorator = False
         head_lines.append(line)
     return "\n".join(head_lines)
 
@@ -618,22 +728,25 @@ def update_generation_script(data):
     selected_apis_list = json.loads(selected_apis)
     model = script_result['model_name']
     model_version = script_result['model_version']
-    # check test script status code coverage
-    overall_coverage, coverage_detail = check_status_code_coverage(selected_apis_list, script)
-    status_code_coverage = round(overall_coverage, 2)
-    converted_detail = convert_sets_to_lists(coverage_detail)
-    status_code_coverage_detail = json.dumps(converted_detail, ensure_ascii=False)
-    # check test script method coverage
-    method_coverage, method_coverage_detail = calculate_method_coverage(selected_apis_list, script)
-    # check test script data type correctness
+    scenario = script_result['test_scenario']
     parameter_context = {
         'selected_apis': selected_apis,
-        'generated_script': script
+        'generated_script': script,
+        'scenario': scenario
     }
+    # check test script status code coverage
+    # status_code_coverage, status_code_coverage_detail = check_status_code_coverage_by_script(parameter_context, model,
+    #                                                                                          model_version)
+    # status_code_coverage = round(overall_coverage, 2)
+    # converted_detail = convert_sets_to_lists(coverage_detail)
+    # status_code_coverage_detail = json.dumps(converted_detail, ensure_ascii=False)
+    # check test script data type correctness
     data_type_coverage, data_type_detail = calculate_data_type_coverage(parameter_context, model, model_version)
+    # check test script method coverage
+    method_coverage, method_coverage_detail = calculate_method_coverage(parameter_context, model, model_version)
     sql = sqls["update_generation_detail"]
-    result = execute(sql, (script, script_syntax_result, data_type_coverage, data_type_detail, status_code_coverage,
-                           status_code_coverage_detail, method_coverage, method_coverage_detail, id))
+    result = execute(sql, (script, script_syntax_result, data_type_coverage, data_type_detail, method_coverage,
+                           method_coverage_detail, id))
     if result:
         log.info("update script success")
         return True
@@ -836,6 +949,33 @@ def set_syntax_metrics(data):
     status = data.get('status')
     metrics_sql = sqls['set_syntax_metrics']
     result = execute(metrics_sql, (status, script_id))
+    if result:
+        return True
+    return False
+
+def set_data_type_metrics_value(data):
+    script_id = data.get('script_id')
+    value = data.get('value')
+    metrics_sql = sqls['set_data_type_metrics_last']
+    result = execute(metrics_sql, (value, script_id))
+    if result:
+        return True
+    return False
+
+def set_method_coverage_metrics_value(data):
+    script_id = data.get('script_id')
+    value = data.get('value')
+    metrics_sql = sqls['set_method_coverage_metrics_last']
+    result = execute(metrics_sql, (value, script_id))
+    if result:
+        return True
+    return False
+
+def set_status_coverage_metrics_value(data):
+    script_id = data.get('script_id')
+    value = data.get('value')
+    metrics_sql = sqls['set_status_code_metrics_last']
+    result = execute(metrics_sql, (value, script_id))
     if result:
         return True
     return False
