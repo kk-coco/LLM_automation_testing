@@ -1,5 +1,5 @@
 from flask import Blueprint, request
-from services.api_service import (generate_test_script, execute_test_script,get_api_data,
+from services.api_service import (generate_test_script, execute_test_script,get_api_data, update_script_review_status,
                                   generate_test_scenario, load_generation_list, query_detail, get_execution_result,
                                   query_api_detail, query_scenario_list, edit_test_scenario, add_test_scenario,
                                   update_test_scenario_status, update_generation_script, query_script_group_detail,
@@ -7,6 +7,7 @@ from services.api_service import (generate_test_script, execute_test_script,get_
                                   update_case_execution_fail_reason, set_data_type_metrics, set_syntax_metrics,
                                   set_method_coverage_metrics, set_status_coverage_metrics, set_data_type_metrics_value,
                                   set_method_coverage_metrics_value, set_status_coverage_metrics_value)
+from utils.response import json_response
 from utils.response import json_response
 
 llm_automation = Blueprint('api', __name__)
@@ -288,6 +289,17 @@ def update_status_code_metrics_value():
         return json_response({'error': 'Missing input data'}), 400
     try:
         result = set_status_coverage_metrics_value(data)
+        return json_response({'data': result})
+    except Exception as e:
+        return json_response({'error': str(e)}), 500
+
+@llm_automation.route('/mark_script_reviewed', methods=['POST'])
+def mark_script_reviewed():
+    data = request.json
+    if not isinstance(data, dict):
+        return json_response({'error': 'Missing input data'}), 400
+    try:
+        result = update_script_review_status(data)
         return json_response({'data': result})
     except Exception as e:
         return json_response({'error': str(e)}), 500

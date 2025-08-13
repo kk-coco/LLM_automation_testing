@@ -50,12 +50,13 @@ set_method_coverage_metrics_last: |
   Update llm_test.generated_script set method_coverage_last=%s, update_time = NOW() where id=%s;
 set_syntax_metrics: |
   Update llm_test.script_case_detail set syntax_check_status=%s, update_time = NOW() where id=%s;
-
+update_script_review_status: |
+  Update llm_test.generated_script set review_status=1, update_time = NOW() where id=%s;
 update_generation_detail: |
   Update llm_test.generated_script set last_version=%s, syntax_correct_last=%s, data_type_correctness_last=%s,
   param_type_check_detail_last_version=%s, data_type_check_status=NULL, status_code_check_status=NULL,
   method_coverage_last=%s,method_coverage_detail_last_version=%s,method_coverage_check_status=NULL, 
-  edit_count = edit_count + 1, update_time = NOW() where id=%s;
+  review_status=0,edit_count = edit_count + 1, update_time = NOW() where id=%s;
 update_status_coverage: |
   Update llm_test.generated_script set status_code_check_status=NULL,status_code_coverage_last=%s,
   status_code_coverage_detail_last_version=%s, update_time = NOW() where id=%s;

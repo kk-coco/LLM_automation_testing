@@ -980,6 +980,13 @@ def set_status_coverage_metrics_value(data):
         return True
     return False
 
+def update_script_review_status(data):
+    script_id = data.get('script_id')
+    metrics_sql = sqls['update_script_review_status']
+    result = execute(metrics_sql, (script_id))
+    if result:
+        return True
+    return False
 
 
 
