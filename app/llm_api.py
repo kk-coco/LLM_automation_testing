@@ -8,7 +8,6 @@ from services.api_service import (generate_test_script, execute_test_script,get_
                                   set_method_coverage_metrics, set_status_coverage_metrics, set_data_type_metrics_value,
                                   set_method_coverage_metrics_value, set_status_coverage_metrics_value)
 from utils.response import json_response
-from utils.response import json_response
 
 llm_automation = Blueprint('api', __name__)
 

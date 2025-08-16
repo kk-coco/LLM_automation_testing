@@ -57,8 +57,41 @@ def extract_cases(script_text):
     while i < len(lines):
         line = lines[i]
         if line.strip().startswith("@"):
-            i += 1
-            if i < len(lines) and re.match(r'^\s*def\s+test_\w+', lines[i]):
+            # Collect all decorator lines (including multi-line decorators)
+            decorator_start = i
+            i += 1  # Move to next line after @
+            
+            # Continue collecting lines until we find a function definition or another @
+            while i < len(lines):
+                current_line = lines[i]
+                stripped = current_line.strip()
+                
+                if stripped.startswith("@"):
+                    break
+                
+                if re.match(r'^\s*def\s+\w+', stripped):
+                    if re.match(r'^\s*def\s+test_\w+', stripped):
+                        match = re.match(r'^\s*def\s+(test_\w+)\s*\(.*?\):', stripped)
+                        if match:
+                            func_name = match.group(1)
+                            start = decorator_start  # Start from the first @ line
+                            i += 1  # Skip the def line
+                            while i < len(lines):
+                                next_line = lines[i]
+                                if next_line.strip() == "":
+                                    i += 1
+                                    continue
+                                if not lines[i].startswith(" ") or lines[i].startswith("\t"):
+                                    break
+                                i += 1
+                            end = i
+                            func_body = "".join(lines[start:end])
+                            func_names.append(func_name)
+                            case_blocks.append(func_body)
+                    else:
+                        pass
+                    break
+                
                 i += 1
             continue
         match = re.match(r'^\s*def\s+(test_\w+)\s*\(.*?\):', line)
@@ -306,13 +339,16 @@ def parse_pytest_output(output):
         stdout = output
     lines = stdout.split('\n')
 
-    test_line_regex = re.compile(r'::(test_[\w_]+)\s+(PASSED|FAILED)')
+    test_line_regex = re.compile(r'::(test_[\w_]+(?:\[[^\]]+\])?)\s+(PASSED|FAILED)')
     test_results = []
     for line in lines:
         match = test_line_regex.search(line)
         if match:
+            full_name = match.group(1)
+            # Extract function name
+            func_name = re.sub(r'\[[^\]]+\]$', '', full_name)
             test_results.append({
-                'name': match.group(1),
+                'name': func_name,
                 'status': match.group(2)
             })
     failure_start = next((i for i, line in enumerate(lines) if 'FAILURES' in line), -1)
@@ -321,11 +357,13 @@ def parse_pytest_output(output):
     failure_reasons = {}
     if failure_start != -1 and summary_start != -1:
         failure_block = '\n'.join(lines[failure_start + 1:summary_start])
-        failure_cases = re.split(r'_{5,} (test_[\w_]+) _{5,}', failure_block)
+        failure_cases = re.split(r'_{5,} (test_[\w_]+(?:\[[^\]]+\])?) _{5,}', failure_block)
         for i in range(1, len(failure_cases) - 1, 2):
-            test_name = failure_cases[i]
+            full_test_name = failure_cases[i]
             reason = failure_cases[i + 1]
-            failure_reasons[test_name] = reason.strip()
+            # Extract function name
+            func_name = re.sub(r'\[[^\]]+\]$', '', full_test_name)
+            failure_reasons[func_name] = reason.strip()
 
     result = {}
     for test in test_results:
@@ -402,6 +440,9 @@ def get_api_data(data):
             result = query_swagger_result['id']
             for path, methods in swagger_json.get('paths', {}).items():
                 for method, details in methods.items():
+                    if isinstance(details, dict) and details.get('deprecated', False):
+                        log.info(f"skip deprecated API operation: {method.upper()} {path}")
+                        continue
                     summary = details.get('summary', '')
                     raw_parameters = details.get('parameters', [])
                     expanded_parameters = []
@@ -658,19 +699,27 @@ def extract_script_head(script: str):
         if func_match:
             func_name = func_match.group(1)
             if collecting_decorator:
-                buffer.append(line)
-                head_lines.extend(buffer)
-                buffer = []
-                collecting_decorator = False
-                continue
+                # Check if the function starts with test_
+                if func_name.startswith("test_"):
+                    buffer = []
+                    collecting_decorator = False
+                    break
+                else:
+                    buffer.append(line)
+                    head_lines.extend(buffer)
+                    buffer = []
+                    collecting_decorator = False
+                    continue
             elif func_name.startswith("test_"):
                 break
             else:
                 head_lines.append(line)
                 continue
+        # If we're collecting decorator content and this line doesn't start with @ or def,
+        # it's part of the decorator (like multi-line parameters)
         if collecting_decorator:
-            buffer = []
-            collecting_decorator = False
+            buffer.append(line)
+            continue
         head_lines.append(line)
     return "\n".join(head_lines)
 
@@ -788,15 +837,166 @@ def update_case_detail(data):
 def replace_case_function_body(script_text, target_mark_name, new_func_code):
     if not script_text.endswith("\n"):
         script_text += "\n"
-    pattern = re.compile(
-        rf'(def\s+{re.escape(target_mark_name)}\s*\(.*?\):\n(?:.*\n)*?)(?=^def\s|\Z)',
-        re.MULTILINE
-    )
-    if not new_func_code.endswith("\n"):
-        new_func_code += "\n"
-
-    updated_script = pattern.sub(new_func_code, script_text)
-    return updated_script
+    
+    new_func_name = None
+    new_func_lines = new_func_code.splitlines()
+    for line in new_func_lines:
+        stripped = line.strip()
+        if stripped.startswith("def "):
+            match = re.match(r'def\s+(\w+)\s*\(', stripped)
+            if match:
+                new_func_name = match.group(1)
+                break
+    
+    if not new_func_name:
+        new_func_name = target_mark_name
+    
+    lines = script_text.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        
+        if stripped.startswith("@"):
+            decorator_start = i
+            # Collect all decorator lines (including multi-line decorators)
+            while i < len(lines):
+                current_line = lines[i]
+                current_stripped = current_line.strip()
+                
+                # If find another @, it's a new decorator
+                if current_stripped.startswith("@"):
+                    break
+                
+                if re.match(r'^\s*def\s+\w+', current_stripped):
+                    if re.match(rf'^\s*def\s+{re.escape(target_mark_name)}\s*\(', current_stripped):
+                        break
+                    else:
+                        i += 1
+                        continue
+                
+                i += 1
+            
+            if i < len(lines) and re.match(rf'^\s*def\s+{re.escape(target_mark_name)}\s*\(', lines[i]):
+                start = decorator_start
+                i += 1  # Skip the def line
+                while i < len(lines):
+                    next_line = lines[i]
+                    if next_line.strip() == "":
+                        i += 1
+                        continue
+                    if not lines[i].startswith(" ") and not lines[i].startswith("\t"):
+                        break
+                    i += 1
+                end = i
+                
+                # Replace the entire function (including decorators)
+                before = "".join(lines[:start])
+                after = "".join(lines[end:])
+                if not new_func_code.endswith("\n"):
+                    new_func_code += "\n"
+                updated_script = before + new_func_code + after
+                return updated_script
+            else:
+                # Not target function, continue searching
+                continue
+        else:
+            # Check if this is target function without decorators (match by function name only)
+            if re.match(rf'^\s*def\s+{re.escape(target_mark_name)}\s*\(', stripped):
+                # Found target function without decorators
+                start = i
+                i += 1  # Skip the def line
+                while i < len(lines):
+                    next_line = lines[i]
+                    if next_line.strip() == "":
+                        i += 1
+                        continue
+                    if not lines[i].startswith(" ") and not lines[i].startswith("\t"):
+                        break
+                    i += 1
+                end = i
+                
+                # Replace the function
+                before = "".join(lines[:start])
+                after = "".join(lines[end:])
+                if not new_func_code.endswith("\n"):
+                    new_func_code += "\n"
+                updated_script = before + new_func_code + after
+                return updated_script
+            i += 1
+    
+    # If function not found with target_mark_name, try to find any function with the same name
+    if new_func_name != target_mark_name:
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+            # Check if this line starts with @ (decorator)
+            if stripped.startswith("@"):
+                decorator_start = i
+                # Collect all decorator lines (including multi-line decorators)
+                while i < len(lines):
+                    current_line = lines[i]
+                    current_stripped = current_line.strip()
+                    
+                    if current_stripped.startswith("@"):
+                        break
+                    if re.match(r'^\s*def\s+\w+', current_stripped):
+                        if re.match(rf'^\s*def\s+{re.escape(new_func_name)}\s*\(', current_stripped):
+                            break
+                        else:
+                            i += 1
+                            continue
+                    
+                    i += 1
+                
+                if i < len(lines) and re.match(rf'^\s*def\s+{re.escape(new_func_name)}\s*\(', lines[i]):
+                    start = decorator_start
+                    i += 1  # Skip the def line
+                    while i < len(lines):
+                        next_line = lines[i]
+                        if next_line.strip() == "":
+                            i += 1
+                            continue
+                        if not lines[i].startswith(" ") and not lines[i].startswith("\t"):
+                            break
+                        i += 1
+                    end = i
+                    
+                    # Replace the entire function (including decorators)
+                    before = "".join(lines[:start])
+                    after = "".join(lines[end:])
+                    if not new_func_code.endswith("\n"):
+                        new_func_code += "\n"
+                    updated_script = before + new_func_code + after
+                    return updated_script
+                else:
+                    # Not target function, continue searching
+                    continue
+            else:
+                if re.match(rf'^\s*def\s+{re.escape(new_func_name)}\s*\(', stripped):
+                    # Found target function without decorators
+                    start = i
+                    i += 1  # Skip the def line
+                    while i < len(lines):
+                        next_line = lines[i]
+                        if next_line.strip() == "":
+                            i += 1
+                            continue
+                        if not lines[i].startswith(" ") and not lines[i].startswith("\t"):
+                            break
+                        i += 1
+                    end = i
+                    
+                    # Replace the function
+                    before = "".join(lines[:start])
+                    after = "".join(lines[end:])
+                    if not new_func_code.endswith("\n"):
+                        new_func_code += "\n"
+                    updated_script = before + new_func_code + after
+                    return updated_script
+                i += 1
+        return script_text
 
 def add_case_to_script(script_text, new_func_code):
     """
@@ -808,15 +1008,77 @@ def add_case_to_script(script_text, new_func_code):
 
 def delete_case_from_script(script_text, target_func_name):
     """
-    remove test case by function name
-    target_mark_name: "@pytest.mark.xxx"
+    remove test case by function name (including decorators)
+    target_func_name: function name to delete
     """
-    pattern = re.compile(
-        rf'def\s+{re.escape(target_func_name)}\s*\(.*?\):\n(?:[ \t]+.*\n?)+',
-        re.MULTILINE
-    )
-    updated_script = pattern.sub('', script_text)
-    return updated_script.strip() + '\n'
+    lines = script_text.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        
+        # Check if this line starts with @ (decorator)
+        if stripped.startswith("@"):
+            decorator_start = i
+            # Collect all decorator lines (including multi-line decorators)
+            while i < len(lines):
+                current_line = lines[i]
+                current_stripped = current_line.strip()
+                
+                if current_stripped.startswith("@"):
+                    break
+                
+                if re.match(r'^\s*def\s+\w+', current_stripped):
+                    if re.match(rf'^\s*def\s+{re.escape(target_func_name)}\s*\(', current_stripped):
+                        break
+                    else:
+                        i += 1
+                        continue
+                
+                i += 1
+            
+            if i < len(lines) and re.match(rf'^\s*def\s+{re.escape(target_func_name)}\s*\(', lines[i]):
+                start = decorator_start
+                i += 1  # Skip the def line
+                while i < len(lines):
+                    next_line = lines[i]
+                    if next_line.strip() == "":
+                        i += 1
+                        continue
+                    if not lines[i].startswith(" ") and not lines[i].startswith("\t"):
+                        break
+                    i += 1
+                end = i
+                
+                before = "".join(lines[:start])
+                after = "".join(lines[end:])
+                updated_script = before + after
+                return updated_script.strip() + '\n'
+            else:
+                continue
+        else:
+            if re.match(rf'^\s*def\s+{re.escape(target_func_name)}\s*\(', stripped):
+                start = i
+                i += 1  # Skip the def line
+                while i < len(lines):
+                    next_line = lines[i]
+                    if next_line.strip() == "":
+                        i += 1
+                        continue
+                    if not lines[i].startswith(" ") and not lines[i].startswith("\t"):
+                        break
+                    i += 1
+                end = i
+                
+                # Remove the function
+                before = "".join(lines[:start])
+                after = "".join(lines[end:])
+                updated_script = before + after
+                return updated_script.strip() + '\n'
+            i += 1
+    
+    # If function not found, return original script
+    return script_text.strip() + '\n'
 
 def add_script_case(data):
     script_id = data.get('script_id')

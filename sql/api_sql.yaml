@@ -164,24 +164,108 @@ query_api_info_by_id: |
 
 query_api_details: |
   SELECT
-    a.id,
-    a.api_path,
-    a.summary,
-    a.method,
-    a.parameters,
-    a.responses,
-    MAX(CASE WHEN ag.is_system_scenario = 0 THEN gar.group_id END) AS unit_group_id,
-    MAX(CASE WHEN ag.is_system_scenario = 1 THEN gar.group_id END) AS system_group_id
-    FROM llm_test.api_details a
-    LEFT JOIN llm_test.group_api_relations gar 
-        ON gar.api_id = a.id
-    LEFT JOIN llm_test.api_group ag
-        ON ag.id = gar.group_id
-    LEFT JOIN llm_test.test_scenario ts 
-        ON ts.group_id = gar.group_id
-    WHERE a.swagger_id = %s
-    GROUP BY a.id
-    ORDER BY a.id DESC;
+      a.id,
+      a.api_path,
+      a.summary,
+      a.method,
+      a.parameters,
+      a.responses,
+      (
+          SELECT gar2.group_id
+          FROM llm_test.group_api_relations gar2
+          JOIN llm_test.api_group ag2 ON ag2.id = gar2.group_id
+          WHERE gar2.api_id = a.id
+            AND ag2.is_system_scenario = 0
+          ORDER BY gar2.group_id DESC
+          LIMIT 1
+      ) AS unit_group_id,
+      (
+          SELECT gar2.group_id
+          FROM llm_test.group_api_relations gar2
+          JOIN llm_test.api_group ag2 ON ag2.id = gar2.group_id
+          WHERE gar2.api_id = a.id
+            AND ag2.is_system_scenario = 1
+          ORDER BY gar2.group_id DESC
+          LIMIT 1
+      ) AS system_group_id,
+      (
+          SELECT CASE
+              WHEN COUNT(*) > 0 
+               AND SUM(
+                   CASE 
+                       WHEN ts.status = 0 
+                        AND ts.review_status = 1
+                        AND EXISTS (
+                            SELECT 1 FROM llm_test.generated_script gs
+                            WHERE gs.scenario_id = ts.id
+                              AND gs.review_status = 1
+                        )
+                       THEN 1 ELSE 0 END
+               ) = COUNT(*)
+              THEN 1 ELSE 0 END
+          FROM llm_test.test_scenario ts
+          WHERE ts.group_id = (
+              SELECT gar2.group_id
+              FROM llm_test.group_api_relations gar2
+              JOIN llm_test.api_group ag2 ON ag2.id = gar2.group_id
+              WHERE gar2.api_id = a.id
+                AND ag2.is_system_scenario = 0
+              ORDER BY gar2.group_id DESC
+              LIMIT 1
+          )
+            AND ts.status = 0
+      ) AS unit_review_status,
+      (
+          SELECT CASE
+              WHEN COUNT(*) > 0 
+               AND SUM(
+                   CASE 
+                       WHEN ts.status = 0 
+                        AND ts.review_status = 1
+                        AND EXISTS (
+                            SELECT 1 FROM llm_test.generated_script gs
+                            WHERE gs.scenario_id = ts.id
+                              AND gs.review_status = 1
+                        )
+                       THEN 1 ELSE 0 END
+               ) = COUNT(*)
+              THEN 1 ELSE 0 END
+          FROM llm_test.test_scenario ts
+          WHERE ts.group_id = (
+              SELECT gar2.group_id
+              FROM llm_test.group_api_relations gar2
+              JOIN llm_test.api_group ag2 ON ag2.id = gar2.group_id
+              WHERE gar2.api_id = a.id
+                AND ag2.is_system_scenario = 1
+              ORDER BY gar2.group_id DESC
+              LIMIT 1
+          )
+            AND ts.status = 0
+      ) AS system_review_status
+
+  FROM llm_test.api_details a
+  WHERE a.swagger_id = %s
+  ORDER BY a.id DESC;
+
+#  SELECT
+#    a.id,
+#    a.api_path,
+#    a.summary,
+#    a.method,
+#    a.parameters,
+#    a.responses,
+#    MAX(CASE WHEN ag.is_system_scenario = 0 THEN gar.group_id END) AS unit_group_id,
+#    MAX(CASE WHEN ag.is_system_scenario = 1 THEN gar.group_id END) AS system_group_id
+#    FROM llm_test.api_details a
+#    LEFT JOIN llm_test.group_api_relations gar
+#        ON gar.api_id = a.id
+#    LEFT JOIN llm_test.api_group ag
+#        ON ag.id = gar.group_id
+#    LEFT JOIN llm_test.test_scenario ts
+#        ON ts.group_id = gar.group_id
+#    WHERE a.swagger_id = %s
+#    GROUP BY a.id
+#    ORDER BY a.id DESC;
 
 
 #  Select id, api_path, summary, method, parameters, responses from llm_test.api_details where swagger_id=%s order by id desc;

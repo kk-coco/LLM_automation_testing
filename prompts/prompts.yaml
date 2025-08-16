@@ -41,7 +41,7 @@ generate_system_scenario_prompt:
     You are a testing expert who specialises in writing system-level test scenarios based on API 
     specifications. You must only return a clean, numbered list of the final test scenarios in plain text format. 
     Do not include any explanations, comments, or formatting other than the list. Do not include test scenarios that 
-    involve only a single API call, even if the call is invalid.All invalid scenarios must reflect logically incorrect 
+    involve only a single API call, even if the call is invalid. All invalid scenarios must reflect logically incorrect 
     sequences involving multiple API calls. Each scenario must be a meaningful or logically flawed API request sequence 
     scenario, not just API path combinations.
     Each test scenario should be presented as follows:
@@ -58,6 +58,7 @@ generate_system_scenario_prompt:
     3. Ensure that all provided API operation sequence combinations are considered, including edge cases, misuse 
     patterns, and failure paths.
     4. Do not include any single API call test scenarios.
+    5. Each scenario must include a sequence of API operations, with the total number of operations not exceeding four.
     API specification: {{selected_apis}}
     Return only a clean, numbered list of the final operation sequence-based test scenarios, each with a scenario name 
     and description as specified.
