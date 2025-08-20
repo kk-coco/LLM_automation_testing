@@ -339,37 +339,93 @@ def parse_pytest_output(output):
         stdout = output
     lines = stdout.split('\n')
 
-    test_line_regex = re.compile(r'::(test_[\w_]+(?:\[[^\]]+\])?)\s+(PASSED|FAILED)')
-    test_results = []
+    status_keywords = 'PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS'
+    test_line_regex = re.compile(r'::(test_[\w_]+(?:\[[^\]]+\])?)\s+(' + status_keywords + r')')
+
+    summary_line_regex = re.compile(r'^(?:' + status_keywords + r')\s+[^\s]+::(test_[^\s]+)')
+
+    setup_error_header_regex = re.compile(r'ERROR at setup of\s+(test_[\w_]+(?:\[[^\]]+\])?)')
+
+    collected_status = {}
+
     for line in lines:
-        match = test_line_regex.search(line)
-        if match:
-            full_name = match.group(1)
-            # Extract function name
+        m = test_line_regex.search(line)
+        if m:
+            full_name = m.group(1)
+            status = m.group(2)
             func_name = re.sub(r'\[[^\]]+\]$', '', full_name)
-            test_results.append({
-                'name': func_name,
-                'status': match.group(2)
-            })
-    failure_start = next((i for i, line in enumerate(lines) if 'FAILURES' in line), -1)
-    summary_start = next((i for i, line in enumerate(lines) if 'short test summary' in line), -1)
+            collected_status[func_name] = status
+            continue
+
+        # Fallback to short summary lines when main lines aren't present
+        sm = summary_line_regex.search(line.strip())
+        if sm:
+            full_name = sm.group(1)
+            func_name = re.sub(r'\[[^\]]+\]$', '', full_name)
+            # The status is at the start of the line
+            status_match = re.match(r'^(' + status_keywords + r')\b', line.strip())
+            if status_match:
+                collected_status[func_name] = status_match.group(1)
+
+    # Extract error/failure reasons from detailed sections
+    summary_start = next((i for i, line in enumerate(lines) if 'short test summary' in line), len(lines))
 
     failure_reasons = {}
-    if failure_start != -1 and summary_start != -1:
-        failure_block = '\n'.join(lines[failure_start + 1:summary_start])
-        failure_cases = re.split(r'_{5,} (test_[\w_]+(?:\[[^\]]+\])?) _{5,}', failure_block)
-        for i in range(1, len(failure_cases) - 1, 2):
-            full_test_name = failure_cases[i]
-            reason = failure_cases[i + 1]
-            # Extract function name
+
+    failure_headers = [i for i, line in enumerate(lines) if re.search(r'=+\s*FAILURES\s*=+', line)]
+    for start_idx in failure_headers:
+        block = '\n'.join(lines[start_idx + 1:summary_start])
+        parts = re.split(r'_{5,}\s+(test_[\w_]+(?:\[[^\]]+\])?)\s+_{5,}', block)
+        for i in range(1, len(parts) - 1, 2):
+            full_test_name = parts[i]
+            reason = parts[i + 1]
             func_name = re.sub(r'\[[^\]]+\]$', '', full_test_name)
             failure_reasons[func_name] = reason.strip()
 
+    # Parse ERRORS block(s), including setup errors
+    error_headers = [i for i, line in enumerate(lines) if re.search(r'=+\s*ERRORS\s*=+', line)]
+    for start_idx in error_headers:
+        block = '\n'.join(lines[start_idx + 1:summary_start])
+        # Split by setup error headers
+        # Keep the headers by using a capturing group in split
+        parts = re.split(r'(?:\n|^)_{5,}.*?ERROR at setup of\s+(test_[\w_]+(?:\[[^\]]+\])?).*?_{5,}\s*\n', block)
+        if len(parts) > 1:
+            # parts looks like: [pre, test_name1, reason1, test_name2, reason2, ...]
+            for i in range(1, len(parts) - 1, 2):
+                full_test_name = parts[i]
+                reason = parts[i + 1]
+                func_name = re.sub(r'\[[^\]]+\]$', '', full_test_name)
+                # Mark status as ERROR if not already set
+                if func_name not in collected_status:
+                    collected_status[func_name] = 'ERROR'
+                # Save reason
+                failure_reasons[func_name] = reason.strip()
+        else:
+            current_test = None
+            reason_lines = []
+            for line in block.split('\n'):
+                m = setup_error_header_regex.search(line)
+                if m:
+                    if current_test and reason_lines:
+                        func_name = re.sub(r'\[[^\]]+\]$', '', current_test)
+                        if func_name not in collected_status:
+                            collected_status[func_name] = 'ERROR'
+                        failure_reasons[func_name] = '\n'.join(reason_lines).strip()
+                        reason_lines = []
+                    current_test = m.group(1)
+                else:
+                    reason_lines.append(line)
+            if current_test and reason_lines:
+                func_name = re.sub(r'\[[^\]]+\]$', '', current_test)
+                if func_name not in collected_status:
+                    collected_status[func_name] = 'ERROR'
+                failure_reasons[func_name] = '\n'.join(reason_lines).strip()
+
     result = {}
-    for test in test_results:
-        name = test['name']
-        status = test['status']
-        error_message = failure_reasons.get(name, '') if status == 'FAILED' else ''
+    for name, status in collected_status.items():
+        error_message = ''
+        if status in ('FAILED', 'ERROR'):
+            error_message = failure_reasons.get(name, '')
         result[name] = {'status': status, 'error_message': error_message}
     return result
 
@@ -599,18 +655,30 @@ def generate_test_scenario(data):
             scenario = call_deepseek(prompt, model_version)
         group_id = result
         sql = sqls["add_test_scenario"]
-        # matches = re.findall(r"(\d+)\.\s+(.*)", scenario)
+        # Normalize model output: strip code fences/preamble and parse robustly
+        if scenario:
+            scenario = scenario.strip()
+            if scenario.startswith("```"):
+                scenario = re.sub(r"^```(?:\w+)?\n?", "", scenario)
+                scenario = re.sub(r"```$", "", scenario.strip())
+            # Drop any leading text before the first enumerated scenario item
+            start_match = re.search(r"\d+\.\s*Scenario Name:\s*", scenario, flags=re.IGNORECASE)
+            if start_match:
+                scenario = scenario[start_match.start():]
+
+        # Parse items like:
+        # 1. Scenario Name: <title>\n   Scenario Description: <desc...>
         pattern = re.compile(
-            r"(\d+)\.\s*Scenario Name:\s*(.+?)\s*Scenario Description:\s*((?:.+\n?)+?)(?=\n\d+\.|$)",
-            re.MULTILINE
+            r"^\s*\d+\.\s*Scenario Name:\s*(?P<title>.+?)\s*(?:\r?\n)+\s*Scenario Description:\s*(?P<desc>.*?)(?=(?:\r?\n)+\s*\d+\.\s*Scenario Name:|$)",
+            re.IGNORECASE | re.MULTILINE | re.DOTALL
         )
-        matches = pattern.findall(scenario)
+        matches = [(None, m.group('title'), m.group('desc')) for m in pattern.finditer(scenario or "")]
         if not matches:
             log.error("No matches found in scenario text. Raw content:")
             log.error(repr(scenario))
         for num, title, description in matches:
             title = title.strip()
-            description = description.strip().replace('\n', ' ')
+            description = re.sub(r"\s+", " ", description.strip())
             print(f"Saving scenario: {title}")
             res = execute(sql, (group_id, title, description, description, model, model_version, scenario_type))
             if res:
@@ -618,7 +686,7 @@ def generate_test_scenario(data):
                 log.info(f"save scenario description success: {description}")
             else:
                 log.info(f"save scenario fail: {title}")
-                log.info(f"save scenario description success: {description}")
+                log.info(f"save scenario description fail: {description}")
         return group_id
     return None
 
@@ -647,6 +715,7 @@ def add_test_scenario(data):
     group_id = data.get("group_id")
     title = data.get("title")
     description = data.get('description')
+    scenario_type = data.get('scenario_type')
     model_name = ""
     if data.get("model_name"):
         model_name = data.get("model_name")
@@ -658,7 +727,7 @@ def add_test_scenario(data):
     if check_result:
         return {'success': False, 'message': 'Scenario already exists'}
     sql = sqls["add_test_scenario"]
-    result = execute(sql, (group_id, title, description, description, model_name, model_version))
+    result = execute(sql, (group_id, title, description, description, model_name, model_version, scenario_type))
     if result:
         log.info("add new scenario success")
         return {'success': True}
@@ -837,49 +906,33 @@ def update_case_detail(data):
 def replace_case_function_body(script_text, target_mark_name, new_func_code):
     if not script_text.endswith("\n"):
         script_text += "\n"
-    
-    new_func_name = None
-    new_func_lines = new_func_code.splitlines()
-    for line in new_func_lines:
-        stripped = line.strip()
-        if stripped.startswith("def "):
-            match = re.match(r'def\s+(\w+)\s*\(', stripped)
-            if match:
-                new_func_name = match.group(1)
-                break
-    
-    if not new_func_name:
-        new_func_name = target_mark_name
-    
+
     lines = script_text.splitlines(keepends=True)
     i = 0
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
-        
+
         if stripped.startswith("@"):
             decorator_start = i
-            # Collect all decorator lines (including multi-line decorators)
-            while i < len(lines):
-                current_line = lines[i]
-                current_stripped = current_line.strip()
-                
-                # If find another @, it's a new decorator
-                if current_stripped.startswith("@"):
+            # Advance through decorator block (including multi-line arguments and consecutive decorators)
+            pos = i
+            while pos < len(lines):
+                s = lines[pos].lstrip()
+                if s.startswith("def "):
                     break
-                
-                if re.match(r'^\s*def\s+\w+', current_stripped):
-                    if re.match(rf'^\s*def\s+{re.escape(target_mark_name)}\s*\(', current_stripped):
-                        break
-                    else:
-                        i += 1
-                        continue
-                
-                i += 1
-            
-            if i < len(lines) and re.match(rf'^\s*def\s+{re.escape(target_mark_name)}\s*\(', lines[i]):
+                # Allow consecutive decorators
+                if s.startswith("@") and pos != decorator_start:
+                    # keep scanning to reach the function definition
+                    pos += 1
+                    continue
+                # Continue through decorator argument lines
+                pos += 1
+
+            # pos now at def or end
+            if pos < len(lines) and re.match(rf'^\s*def\s+{re.escape(target_mark_name)}\s*\(', lines[pos]):
                 start = decorator_start
-                i += 1  # Skip the def line
+                i = pos + 1  # move past def line
                 while i < len(lines):
                     next_line = lines[i]
                     if next_line.strip() == "":
@@ -889,7 +942,7 @@ def replace_case_function_body(script_text, target_mark_name, new_func_code):
                         break
                     i += 1
                 end = i
-                
+
                 # Replace the entire function (including decorators)
                 before = "".join(lines[:start])
                 after = "".join(lines[end:])
@@ -898,7 +951,8 @@ def replace_case_function_body(script_text, target_mark_name, new_func_code):
                 updated_script = before + new_func_code + after
                 return updated_script
             else:
-                # Not target function, continue searching
+                # Advance to continue scanning safely
+                i = max(pos, i + 1)
                 continue
         else:
             # Check if this is target function without decorators (match by function name only)
@@ -924,79 +978,9 @@ def replace_case_function_body(script_text, target_mark_name, new_func_code):
                 updated_script = before + new_func_code + after
                 return updated_script
             i += 1
-    
-    # If function not found with target_mark_name, try to find any function with the same name
-    if new_func_name != target_mark_name:
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            stripped = line.strip()
-            # Check if this line starts with @ (decorator)
-            if stripped.startswith("@"):
-                decorator_start = i
-                # Collect all decorator lines (including multi-line decorators)
-                while i < len(lines):
-                    current_line = lines[i]
-                    current_stripped = current_line.strip()
-                    
-                    if current_stripped.startswith("@"):
-                        break
-                    if re.match(r'^\s*def\s+\w+', current_stripped):
-                        if re.match(rf'^\s*def\s+{re.escape(new_func_name)}\s*\(', current_stripped):
-                            break
-                        else:
-                            i += 1
-                            continue
-                    
-                    i += 1
-                
-                if i < len(lines) and re.match(rf'^\s*def\s+{re.escape(new_func_name)}\s*\(', lines[i]):
-                    start = decorator_start
-                    i += 1  # Skip the def line
-                    while i < len(lines):
-                        next_line = lines[i]
-                        if next_line.strip() == "":
-                            i += 1
-                            continue
-                        if not lines[i].startswith(" ") and not lines[i].startswith("\t"):
-                            break
-                        i += 1
-                    end = i
-                    
-                    # Replace the entire function (including decorators)
-                    before = "".join(lines[:start])
-                    after = "".join(lines[end:])
-                    if not new_func_code.endswith("\n"):
-                        new_func_code += "\n"
-                    updated_script = before + new_func_code + after
-                    return updated_script
-                else:
-                    # Not target function, continue searching
-                    continue
-            else:
-                if re.match(rf'^\s*def\s+{re.escape(new_func_name)}\s*\(', stripped):
-                    # Found target function without decorators
-                    start = i
-                    i += 1  # Skip the def line
-                    while i < len(lines):
-                        next_line = lines[i]
-                        if next_line.strip() == "":
-                            i += 1
-                            continue
-                        if not lines[i].startswith(" ") and not lines[i].startswith("\t"):
-                            break
-                        i += 1
-                    end = i
-                    
-                    # Replace the function
-                    before = "".join(lines[:start])
-                    after = "".join(lines[end:])
-                    if not new_func_code.endswith("\n"):
-                        new_func_code += "\n"
-                    updated_script = before + new_func_code + after
-                    return updated_script
-                i += 1
-        return script_text
+
+    # If function not found, return original script unchanged
+    return script_text
 
 def add_case_to_script(script_text, new_func_code):
     """

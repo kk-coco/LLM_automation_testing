@@ -128,7 +128,7 @@ query_execution_result: |
   SUM(CASE WHEN source_type  = 'MANUAL' THEN 1 ELSE 0 END) AS added_num,
   SUM(CASE WHEN edit_count > 0 and source_type ='LLM' THEN 1 ELSE 0 END) AS edit_num,
   SUM(CASE WHEN last_execution_status  = 'PASSED' THEN 1 ELSE 0 END) AS pass_num,
-  SUM(CASE WHEN last_execution_status  = 'FAILED' THEN 1 ELSE 0 END) AS fail_num
+  SUM(CASE WHEN last_execution_status  = 'FAILED' or last_execution_status  = 'ERROR' THEN 1 ELSE 0 END) AS fail_num
   FROM script_case_detail WHERE script_id  = %s;
 #  Select id, task_id, result_content from llm_test.execution_results where task_id=%s order by id desc;
 

@@ -55,7 +55,7 @@ generate_system_scenario_prompt:
     1. Carefully analyse all provided APIs, including their upstream and downstream dependencies.
     2. Include both valid (logically correct and meaningful) and invalid (logically incorrect, misordered, or incomplete)
     API request sequences.
-    3. Ensure that all provided API operation sequence combinations are considered, including edge cases, misuse 
+    3. Ensure that all provided API operation sequence combinations are considered, including valid, edge cases, misuse 
     patterns, and failure paths.
     4. Do not include any single API call test scenarios.
     5. Each scenario must include a sequence of API operations, with the total number of operations not exceeding four.
