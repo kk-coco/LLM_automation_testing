@@ -4,14 +4,12 @@ generate_test_case_prompt:
     Only return clean pytest scripts without any explanations.
   user: |
     Please create test code in Python 3.10 in Pytest format and using the requests library for testing the API 
-    defined by the following API information
-    Please create test code in Python 3.10 in Pytest format, and using the requests library for testing only 
-    the following specific scenario: {{selected_scenarios}}
+    API Info :{{selected_apis}}
+    Scenario: {{selected_scenarios}}
     The test code must:
     1. Strictly follow only the specified scenario
     2. Use the exact parameters and responses from the provided API info
     3. Include only the necessary test cases for this specific scenario
-    API Info :{{selected_apis}}
     Return only the pytest code for this single scenario.
 generate_test_scenario_prompt:
   system: |
